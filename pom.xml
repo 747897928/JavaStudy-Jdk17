@@ -12,6 +12,7 @@
     <modules>
         <module>study-common</module>
         <module>spring-security-study</module>
+        <module>webflux-parquet-export-demo</module>
     </modules>
 
     <parent>
