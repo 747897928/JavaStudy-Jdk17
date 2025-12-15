@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Flux;
+import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
 import java.nio.file.Path;
@@ -82,8 +82,7 @@ public class DemoController {
         response.getHeaders().set(HttpHeaders.CONTENT_DISPOSITION,
                 "attachment; filename=\"" + filename + "\"");
 
-        Flux<DataBuffer> body = service.export(parquet, format, response.bufferFactory());
+        Publisher<DataBuffer> body = service.export(parquet, format, response.bufferFactory());
         return response.writeWith(body);
     }
 }
-

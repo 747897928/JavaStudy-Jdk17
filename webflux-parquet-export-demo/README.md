@@ -21,6 +21,10 @@ mvn -pl webflux-parquet-export-demo spring-boot:run
 
 服务启动后默认端口 `8080`（见 `src/main/resources/application.yml`）。
 
+说明：
+- 该模块为了避免父工程里“锁死的旧依赖版本（如 Jackson 2.11、SLF4J 1.7）”与 Spring Boot 3.5.6 冲突，模块自身使用 `spring-boot-starter-parent:3.5.6` 作为 parent。
+- 你本机 Maven 版本较旧（3.3.9），模块在 `pom.xml` 里显式锁定了 `maven-compiler-plugin` 等插件版本以保证可以构建运行。
+
 ## 2. 生成 demo.parquet
 
 ```bash
