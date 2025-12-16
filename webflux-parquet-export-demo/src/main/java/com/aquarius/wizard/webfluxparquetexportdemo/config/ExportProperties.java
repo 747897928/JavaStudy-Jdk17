@@ -11,7 +11,7 @@ public class ExportProperties {
     /**
      * WebFlux response body chunk size (DataBuffer size), in bytes.
      * <p>
-     * Beginner note: Spring groups bytes written to the response OutputStream into DataBuffer chunks of this size.
+     * Note: Spring groups bytes written to the response OutputStream into DataBuffer chunks of this size.
      * Larger chunks usually mean better throughput; smaller chunks can reduce first-byte latency.
      */
     private int chunkSize = 64 * 1024;
@@ -19,14 +19,14 @@ public class ExportProperties {
     /**
      * BufferedOutputStream buffer size used before ZipOutputStream, in bytes.
      * <p>
-     * Beginner note: CSV writing produces many small writes (commas/newlines/quotes). Buffering reduces overhead.
+     * Note: CSV writing produces many small writes (commas/newlines/quotes). Buffering reduces overhead.
      */
     private int outputBufferSize = 64 * 1024;
 
     /**
      * Safety cap: export at most N rows.
      * <p>
-     * Beginner note: Parquet -> CSV expansion can be huge, so an optional safety limit can protect servers.
+     * Note: Parquet -> CSV expansion can be huge, so an optional safety limit can protect servers.
      */
     private long maxRows = 5_000_000L;
 

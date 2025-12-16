@@ -10,7 +10,7 @@ import java.io.OutputStream;
  * Used to implement "flush every N bytes" without adding per-byte branching logic in hot paths
  * (the flush decision can be made at row boundaries).
  * <p>
- * Beginner note: the counter increases when our code calls {@code write(...)} on this stream.
+ * Note: the counter increases when our code calls {@code write(...)} on this stream.
  * It does not try to guess how many bytes have reached the network; it only measures how much we
  * have produced so far.
  */

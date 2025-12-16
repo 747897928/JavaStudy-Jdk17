@@ -18,6 +18,7 @@ import org.apache.parquet.hadoop.example.GroupWriteSupport;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.io.api.Binary;
+import org.apache.parquet.schema.LogicalTypeAnnotation;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.MessageTypeParser;
 import org.apache.parquet.schema.PrimitiveType;
@@ -35,11 +36,15 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
@@ -146,31 +151,31 @@ public class ParquetExportService {
                              conf
                      )) {
 
-            for (long i = 0; i < rows; i++) {
-                Group g = factory.newGroup();
+            for (long rowIndex = 0; rowIndex < rows; rowIndex++) {
+                Group rowGroup = factory.newGroup();
 
                 // Make some columns null randomly (optional fields), to test: null -> empty
-                if (random.nextInt(10) != 0) g.add("i32", random.nextInt());
-                if (random.nextInt(10) != 0) g.add("i64", random.nextLong());
+                if (random.nextInt(10) != 0) rowGroup.add("i32", random.nextInt());
+                if (random.nextInt(10) != 0) rowGroup.add("i64", random.nextLong());
                 if (random.nextInt(10) != 0) {
                     Instant now = Instant.ofEpochMilli(System.currentTimeMillis() + random.nextInt(1_000_000));
-                    g.add("t96", Binary.fromConstantByteArray(Int96Util.instantToInt96(now)));
+                    rowGroup.add("t96", Binary.fromConstantByteArray(Int96Util.instantToInt96(now)));
                 }
-                if (random.nextInt(10) != 0) g.add("f32", random.nextFloat());
-                if (random.nextInt(10) != 0) g.add("b", random.nextBoolean());
-                if (random.nextInt(10) != 0) g.add("d64", random.nextDouble());
+                if (random.nextInt(10) != 0) rowGroup.add("f32", random.nextFloat());
+                if (random.nextInt(10) != 0) rowGroup.add("b", random.nextBoolean());
+                if (random.nextInt(10) != 0) rowGroup.add("d64", random.nextDouble());
 
                 if (random.nextInt(10) != 0) {
                     // ASCII bytes are easier to eyeball in CSV, but export logic supports arbitrary bytes.
-                    byte[] bytes = new byte[16];
-                    for (int k = 0; k < bytes.length; k++) {
+                    byte[] randomAsciiBytes = new byte[16];
+                    for (int byteIndex = 0; byteIndex < randomAsciiBytes.length; byteIndex++) {
                         int ch = 33 + random.nextInt(94); // '!'..'~'
-                        bytes[k] = (byte) ch;
+                        randomAsciiBytes[byteIndex] = (byte) ch;
                     }
-                    g.add("bin", Binary.fromConstantByteArray(bytes));
+                    rowGroup.add("bin", Binary.fromConstantByteArray(randomAsciiBytes));
                 }
 
-                writer.write(g);
+                writer.write(rowGroup);
             }
         }
 
@@ -247,13 +252,13 @@ public class ParquetExportService {
                             long flushEveryBytes,
                             boolean wrapPlainCsvBuffer) {
         Configuration conf = new Configuration();
-        Path hPath = new Path(parquetFile.toUri());
+        Path parquetPath = new Path(parquetFile.toUri());
 
         long flushThresholdBytes = Math.max(0, flushEveryBytes);
         long maxRows = props.getMaxRows() <= 0 ? Long.MAX_VALUE : props.getMaxRows();
 
         try {
-            MessageType schema = readSchema(conf, hPath);
+            MessageType schema = readSchema(conf, parquetPath);
 
             OutputStream out = rawOut;
             if (wrapPlainCsvBuffer) {
@@ -271,17 +276,17 @@ public class ParquetExportService {
             long lastFlushedAt = countingOut.getCount();
 
             GroupReadSupport readSupport = new GroupReadSupport();
-            try (ParquetReader<Group> reader = ParquetReader.builder(readSupport, hPath).withConf(conf).build()) {
+            try (ParquetReader<Group> reader = ParquetReader.builder(readSupport, parquetPath).withConf(conf).build()) {
                 long row = 0L;
-                Group g;
-                while ((g = reader.read()) != null) {
+                Group rowGroup;
+                while ((rowGroup = reader.read()) != null) {
                     row++;
                     if (row > maxRows) {
                         break;
                     }
 
                     try {
-                        CsvUtil.writeRow(countingOut, g, schema, CSV_CHARSET, this::cellValueToCell);
+                        CsvUtil.writeRow(countingOut, rowGroup, schema, CSV_CHARSET, this::getCsvCellValue);
                         if (flushThresholdBytes > 0 && (countingOut.getCount() - lastFlushedAt) >= flushThresholdBytes) {
                             // Flush is for "latency/progress feel", not for memory safety.
                             // Memory safety mainly comes from streaming + backpressure + bounded buffers.
@@ -314,43 +319,117 @@ public class ParquetExportService {
     }
 
     /**
-     * Convert a parquet cell into an output cell:
-     * - null -> empty
-     * - primitive -> string/bytes
-     * - BINARY/FIXED_LEN_BYTE_ARRAY -> raw bytes
+     * Converts one Parquet cell to something that can be written to CSV.
+     * <p>
+     * Returns:
+     * <ul>
+     *   <li>{@code null} - empty cell</li>
+     *   <li>{@code String/Number/...} - will be written as text</li>
+     *   <li>{@code byte[]} - will be written as raw bytes (still CSV-escaped)</li>
+     * </ul>
+     * <p>
+     * Note: Parquet has "physical types" (INT32/INT64/BINARY...) and optional "logical types"
+     * (DATE/TIME/TIMESTAMP/DECIMAL...). The same physical INT32 can mean "int" or "date", depending on the
+     * logical type annotation.
      */
-    private CsvUtil.Cell cellValueToCell(Group g, int fieldIndex, Type fieldType) {
-        if (g.getFieldRepetitionCount(fieldIndex) == 0) {
-            return CsvUtil.Cell.empty();
+    private Object getCsvCellValue(Group rowGroup, Type fieldType, int fieldIndex) {
+        if (rowGroup.getFieldRepetitionCount(fieldIndex) == 0) {
+            return null;
         }
 
         if (!fieldType.isPrimitive()) {
-            return CsvUtil.Cell.ofString(g.getGroup(fieldIndex, 0).toString());
+            return rowGroup.getGroup(fieldIndex, 0).toString();
         }
 
-        PrimitiveType pt = fieldType.asPrimitiveType();
-        PrimitiveTypeName ptn = pt.getPrimitiveTypeName();
+        PrimitiveType primitiveType = fieldType.asPrimitiveType();
+        PrimitiveTypeName physicalType = primitiveType.getPrimitiveTypeName();
+        LogicalTypeAnnotation logicalType = primitiveType.getLogicalTypeAnnotation();
 
-        return switch (ptn) {
-            case INT32 -> CsvUtil.Cell.ofString(Integer.toString(g.getInteger(fieldIndex, 0)));
-            case INT64 -> CsvUtil.Cell.ofString(Long.toString(g.getLong(fieldIndex, 0)));
-            case FLOAT -> CsvUtil.Cell.ofString(Float.toString(g.getFloat(fieldIndex, 0)));
-            case DOUBLE -> CsvUtil.Cell.ofString(Double.toString(g.getDouble(fieldIndex, 0)));
-            case BOOLEAN -> CsvUtil.Cell.ofString(Boolean.toString(g.getBoolean(fieldIndex, 0)));
+        return switch (physicalType) {
+            case INT32 -> formatInt32(rowGroup.getInteger(fieldIndex, 0), logicalType);
+            case INT64 -> formatInt64(rowGroup.getLong(fieldIndex, 0), logicalType);
+            case FLOAT -> Float.toString(rowGroup.getFloat(fieldIndex, 0));
+            case DOUBLE -> Double.toString(rowGroup.getDouble(fieldIndex, 0));
+            case BOOLEAN -> Boolean.toString(rowGroup.getBoolean(fieldIndex, 0));
 
             case INT96 -> {
-                Binary b = g.getInt96(fieldIndex, 0);
-                Instant instant = Int96Util.int96ToInstant(b.getBytes());
-                yield CsvUtil.Cell.ofString(instant.toString());
+                // INT96 is historically used for timestamps (e.g. older Hive/Impala writers).
+                // It is not a standard logical type, but converting to Instant is the most common expectation.
+                Binary int96Binary = rowGroup.getInt96(fieldIndex, 0);
+                Instant instant = Int96Util.int96ToInstant(int96Binary.getBytes());
+                yield instant.toString();
             }
 
             case BINARY, FIXED_LEN_BYTE_ARRAY -> {
-                Binary b = g.getBinary(fieldIndex, 0);
-                yield CsvUtil.Cell.ofBytes(b.getBytes());
+                Binary binaryValue = rowGroup.getBinary(fieldIndex, 0);
+
+                // If annotated as DECIMAL, decode to a human-readable decimal string.
+                if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
+                    BigInteger unscaled = new BigInteger(binaryValue.getBytes());
+                    yield new BigDecimal(unscaled, decimal.getScale()).toPlainString();
+                }
+
+                // If annotated as STRING-like, decode UTF-8 for readability.
+                // We intentionally do NOT call String.intern(): for large exports it can cause memory pressure.
+                if (logicalType instanceof LogicalTypeAnnotation.StringLogicalTypeAnnotation
+                        || logicalType instanceof LogicalTypeAnnotation.EnumLogicalTypeAnnotation
+                        || logicalType instanceof LogicalTypeAnnotation.JsonLogicalTypeAnnotation) {
+                    yield binaryValue.toStringUsingUTF8();
+                }
+
+                // Otherwise keep raw bytes (works for arbitrary binary).
+                yield binaryValue.getBytes();
             }
 
-            default -> CsvUtil.Cell.ofString(g.getValueToString(fieldIndex, 0));
+            default -> rowGroup.getValueToString(fieldIndex, 0);
         };
+    }
+
+    private Object formatInt32(int value, LogicalTypeAnnotation logicalType) {
+        if (logicalType instanceof LogicalTypeAnnotation.DateLogicalTypeAnnotation) {
+            return LocalDate.ofEpochDay(value).toString();
+        }
+        if (logicalType instanceof LogicalTypeAnnotation.TimeLogicalTypeAnnotation time) {
+            long nanos = switch (time.getUnit()) {
+                case MILLIS -> (long) value * 1_000_000L;
+                case MICROS -> (long) value * 1_000L;
+                case NANOS -> (long) value;
+            };
+            return LocalTime.ofNanoOfDay(nanos).toString();
+        }
+        if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
+            return BigDecimal.valueOf(value, decimal.getScale()).toPlainString();
+        }
+        return Integer.toString(value);
+    }
+
+    private Object formatInt64(long value, LogicalTypeAnnotation logicalType) {
+        if (logicalType instanceof LogicalTypeAnnotation.TimeLogicalTypeAnnotation time) {
+            long nanos = switch (time.getUnit()) {
+                case MILLIS -> value * 1_000_000L;
+                case MICROS -> value * 1_000L;
+                case NANOS -> value;
+            };
+            return LocalTime.ofNanoOfDay(nanos).toString();
+        }
+        if (logicalType instanceof LogicalTypeAnnotation.TimestampLogicalTypeAnnotation timestamp) {
+            Instant instant = switch (timestamp.getUnit()) {
+                case MILLIS -> Instant.ofEpochMilli(value);
+                case MICROS -> Instant.ofEpochSecond(
+                        Math.floorDiv(value, 1_000_000L),
+                        Math.floorMod(value, 1_000_000L) * 1_000L
+                );
+                case NANOS -> Instant.ofEpochSecond(
+                        Math.floorDiv(value, 1_000_000_000L),
+                        Math.floorMod(value, 1_000_000_000L)
+                );
+            };
+            return instant.toString();
+        }
+        if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
+            return BigDecimal.valueOf(value, decimal.getScale()).toPlainString();
+        }
+        return Long.toString(value);
     }
 
     private boolean isClientAbort(IOException e) {

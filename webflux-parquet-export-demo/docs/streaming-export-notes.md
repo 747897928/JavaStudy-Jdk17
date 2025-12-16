@@ -103,6 +103,11 @@ ZIP 的中央目录在末尾，所以：
 - 使用 try-with-resources 安全关闭 `ZipOutputStream`（释放 deflater 资源）
 - 同时不影响 WebFlux 对响应流的管理
 
+补充：这不等于“永远不 close”。
+
+- `NonClosingOutputStream` 只是不让 <u>业务代码</u> 提前关闭“HTTP 响应底层流”
+- 当 `outputStreamPublisher` 的 consumer 正常结束（或异常/取消）后，Spring 会在合适的时机关闭/回收底层资源
+
 代码位置：
 
 - `src/main/java/com/aquarius/wizard/webfluxparquetexportdemo/util/NonClosingOutputStream.java`
@@ -249,3 +254,192 @@ ParquetReader、ZipOutputStream 都是阻塞 IO/CPU 操作，因此必须在专�
   - `src/main/java/.../util/NonClosingOutputStream.java`
 - 参数：`src/main/java/.../config/ExportProperties.java` + `src/main/resources/application.yml`
 
+---
+
+## 附录 A：其他 AI 的笔记（原文摘录，未完全校验）
+
+说明：下面内容来自“其他 AI”输出，你希望“先记下来”。其中有些表述可能偏绝对（例如“write() 在无 demand 时一定阻塞”等），请以 Spring/Reactive Streams 的官方文档与实际压测行为为准。本附录不代表本项目一定完全同意其中的所有细节，只做资料留存。
+
+- PDF：`webflux-parquet-export-demo/webflux_parquet_csv_zip_streaming_notes.pdf`
+
+### 原文
+
+> # WebFlux 中将 Parquet 流式转 CSV 并实时压缩为 ZIP 的实现思路与原理说明
+>
+> ## 0. 背景与目标
+>
+> 你们的核心约束非常明确：
+>
+> * Parquet 可能非常大（几十 MB 到数 GB），CSV 可能膨胀很多倍。
+> * 服务器 JVM 内存有限（例如 4GB），不能把 CSV/ZIP 或大量中间对象攒在内存。
+> * 希望“边读边写”，下载可以慢，但必须持续输出；客户端断开后要尽快停止，不能继续读到把内存拖爆。
+>
+> 你们已经确认不再走 `Flux<Map<String,Object>>` 这条路，这个方向是正确的（原因见第 3、7 节）。
+>
+> ---
+>
+> ## 1. 什么是背压（Backpressure）
+>
+> 背压来自 Reactive Streams 规范，本质是“下游拉取（pull）驱动上游生产（push）”的**流量控制**：
+>
+> * **下游（Subscriber）通过 `request(n)` 表达需求（demand）**：我现在最多还能处理 n 个元素。
+> * **上游（Publisher）必须遵守：发送的 `onNext` 不能超过已请求数量**，否则就意味着上游在“强推”数据、逼迫系统在中间缓存，最终容易 OOM。规范里有明确的 MUST 约束：Publisher “MUST NOT emit more onNext than requested”。
+> * 规范的设计目标之一就是：不必为了匹配上下游速率而在中间**无限缓冲**，而是由 Subscriber 控制队列边界。
+>
+> 在 WebFlux 下载场景里，“下游”通常就是**网络写出端**：客户端带宽慢、TCP 窗口小、或者客户端暂时不读，都会让下游 demand 下降；正确的做法是上游也随之变慢，而不是继续生产并缓存。
+>
+> ---
+>
+> ## 2. 你们现状（Flux.create + Map）为什么容易 OOM
+>
+> 你描述的做法大概率是：
+>
+> * `Flux.create` + `while(reader.read() != null) sink.next(map)` 这种“上游紧密 while 循环推送”；
+> * 每行 new 一个 `Map<String,Object>`，再在 reactive 链路里 `index().flatMapSequential(...)` 组装 CSV 的 `Flux<DataBuffer>`。
+>
+> 这里的结构性风险有两个：
+>
+> ### 2.1 `Flux.create` 的默认行为就是“下游跟不上就缓存”
+>
+> Reactor 在 `Flux.create` 的 Javadoc 里说得很直白：它适合你“不用担心取消和背压”，因为当下游跟不上时会**buffer all signals**（缓冲所有信号）。
+> 而 `FluxSink.OverflowStrategy.BUFFER` 也明确警告：这是**无界缓冲**，可能导致 `OutOfMemoryError`。
+>
+> 换句话说：当网络慢（下游慢）时，你的 `while` 仍可能快速 `next(map)`，这些 map 会被队列堆住，内存必炸。
+>
+> ### 2.2 “每行一个 Map”会极大放大 GC 与对象滞留
+>
+> 即使不 OOM，也会出现：
+>
+> * 海量对象分配（Map、Entry、装箱类型、String 拼接/格式化）；
+> * 下游慢时对象存活时间变长（因为排队等待写出），GC 压力陡增；
+> * 一旦链路里某处有预取/缓存（很多 Reactor operator 有 prefetch 语义），对象滞留会进一步放大。
+>
+> 因此“不要用 `Flux<Map<...>>`”不仅是风格问题，而是**内存安全性**问题。
+>
+> ---
+>
+> ## 3. 关键方案：把“背压闸门”放在 OutputStream 上
+>
+> 你之前提到 Spring 6.1+ 的 `DataBufferUtils.outputStreamPublisher`，它正是为这种“阻塞写入逻辑 + 响应式下游”桥接准备的。
+>
+> 它的 Javadoc 给了你想要的全部语义保证：
+>
+> * `OutputStream.write()` 写入的数据会先缓冲，超过默认 chunk（1024）或 `flush()` 时，才产出一个 `DataBuffer`；
+> * **如果没有 demand，`OutputStream.write()` 会阻塞直到有 demand**；
+> * **如果订阅被 cancel（例如客户端断开），后续 `write()` 会抛 `IOException`**。
+>
+> 这意味着你可以用一个“传统的、同步的、边读边写”的导出循环来写 CSV/ZIP，但它的写出节奏会被下游 demand 自动节流——这就是背压在工程上的落点。
+>
+> ---
+>
+> ## 4. 为什么可以不落地 CSV，直接边写边压缩成 ZIP
+>
+> ### 4.1 ZIP 写入天然支持流式
+>
+> `ZipOutputStream` 的语义就是“顺序写 entry”：
+>
+> * `putNextEntry`：开始一个新的 ZIP entry，把流定位到 entry 数据起点；
+> * 你可以不断 `write(byte[], off, len)` 把 CSV 字节写进去；
+> * `closeEntry`：关闭当前 entry，准备下一个；
+> * `finish`：写完 ZIP 的中央目录等收尾结构（不关闭底层流）。
+>
+> 重要点：**写 ZIP entry 并不要求你预先知道 CSV 完整大小**。因此你完全可以：
+>
+> > ParquetReader 读一行 → 格式化成 CSV 一行 → 写入 ZipOutputStream →（由 outputStreamPublisher 转成 DataBuffer）→ 写到网络
+>
+> ### 4.2 “解压后必须是原 CSV”如何保证
+>
+> 只要你写入 ZIP entry 的字节序列就是你想要的 CSV（比如 UTF-8 + `\n`），ZIP 的压缩（DEFLATE）是**无损**的；解压得到的字节序列与写入前一致。你不需要先落地 CSV 才能保证一致性，一致性来自“你写进去的就是最终 CSV 字节”。
+>
+> 工程上你需要做的只是：
+>
+> * 明确 CSV 编码（建议 UTF-8）；
+> * 严格实现 CSV 转义（逗号、双引号、换行等）。
+>
+> ---
+>
+> ## 5. 为什么“读一行写一行 + outputStreamPublisher”就不会 OOM
+>
+> 把内存占用拆开看，你就能直观看到它为什么稳：
+>
+> ### 5.1 你不再创建“可堆积的行对象流”
+>
+> 旧方案：行对象（Map）→ reactive 队列/预取 → 网络慢就堆积。
+> 新方案：行对象只在**当前循环迭代**存在，写完即丢；不会形成“可无限堆积的中间集合”。
+>
+> ### 5.2 下游慢时，上游会被迫慢下来（关键在“write 阻塞”）
+>
+> 当客户端慢导致 demand 降低时：
+>
+> * `outputStreamPublisher` 让 `OutputStream.write()` 阻塞（无 demand 不让你继续写）。
+> * 你的导出线程卡在写出点，自然不会继续从 ParquetReader 往下读，从而不会继续产生更多行数据、更多对象。
+> * 这正符合 Reactive Streams 的核心约束：生产速率受下游需求控制，避免无界缓冲。
+>
+> ### 5.3 客户端断开后不会继续读到死
+>
+> 客户端断开会触发 cancel：
+>
+> * `outputStreamPublisher` 规定：cancel 后 `write()` 会抛 `IOException`。
+> * 你在导出循环里捕获这个异常并退出，同时 `close()` ParquetReader/ZipOutputStream/文件句柄，即可“断即止损”。
+>
+> ---
+>
+> ## 6. DataBufferUtils.outputStreamPublisher 在底层到底做了什么
+>
+> 你可以把它理解成一个“把阻塞 OutputStream 写入变成 `Publisher<DataBuffer>`”的适配器：
+>
+> * 你提供一个 `Consumer<OutputStream>`，里面写你熟悉的阻塞 I/O 逻辑（读 Parquet、写 CSV/ZIP）。
+> * Spring 在内部把你写入的字节按照 chunk 切片包装成 `DataBuffer`（由 `DataBufferFactory` 创建）。
+> * WebFlux 服务器（Reactor Netty 等）订阅这个 Publisher，把 `DataBuffer` 写到网络。
+>
+> 并且 Spring 的 DataBuffer 抽象本身就是为网络 I/O 做的：`DataBufferFactory` 可以分配或包装缓冲区；底层实现可能是 Netty 的池化 ByteBuf，对性能/拷贝有帮助。
+>
+> ---
+>
+> ## 7. 为什么我们明确不再用 Flux<Map<...>>（给你写笔记用的结论）
+>
+> 一句话总结：**Flux<Map> 在“上游可能很快、下游可能很慢”的导出链路中，会把速率不匹配转化为“对象堆积”，而对象堆积就是 OOM 的前兆。**
+>
+> 更具体地、可以直接抄到笔记里：
+>
+> 1. `Flux.create` 在下游跟不上时会缓冲所有信号（不担心背压），非常容易无界堆积。
+> 2. Map/装箱/字符串等对象分配巨大，且在回压下存活时间变长，GC 压力飙升。
+> 3. reactive 操作符普遍存在预取/排队语义；你很难从整体上证明“任何时候都不会缓存太多行对象”。
+> 4. 用 `outputStreamPublisher` 把背压闸门放在“最靠近网络”的位置，才能让上游读取天然与网络消费对齐。
+>
+> ---
+>
+> ## 8. 这个方案的收益与适用场景
+>
+> ### 能应对的场景
+>
+> * Parquet 几百 MB/数 GB、CSV 膨胀很大但允许慢慢下；
+> * JVM 内存不大、但磁盘和网络可用；
+> * 客户端可能中途取消，需要服务端尽快停止（不做无意义读/算）。
+>
+> ### 主要收益
+>
+> * **内存上界清晰**：单行对象 + 少量缓冲（writer buffer、zip deflater buffer、chunk buffer）。
+> * **背压天然生效**：网络慢 → demand 小 → write 阻塞 → 上游读 Parquet 自动慢。
+> * **无需落地 CSV**：减少磁盘占用、减少一次额外 I/O；同时避免“落地 CSV 后再压缩”的二次遍历。
+>
+> ---
+>
+> ## 9. 你做 PoC/压测时建议重点观察的指标
+>
+> 1. **堆内存曲线**：导出过程中是否平稳（应接近平台化，而不是随时间增长）。
+> 2. **GC 次数/停顿**：Map 方案会明显更差；新方案应显著下降。
+> 3. **取消行为**：客户端下载中断后，服务端是否在秒级停止读 parquet，并释放文件句柄。
+> 4. **吞吐**：CPU（压缩）、磁盘（读 parquet）、网络（写 zip）谁是瓶颈。
+>
+> ---
+>
+> ## 参考依据（对应你要的“技术原理出处”）
+>
+> * Reactive Streams 规范：Publisher 不得发送超过请求量的 onNext（背压核心约束）。
+> * Reactive Streams 规范：由 Subscriber 控制队列边界、避免无限缓冲。
+> * Reactor `Flux.create`：下游跟不上时通过缓冲处理（buffer all signals）。
+> * Reactor `FluxSink.OverflowStrategy.BUFFER`：无界缓冲可能导致 OOM。
+> * Spring `DataBufferUtils.outputStreamPublisher`：无 demand 时 `write()` 阻塞；cancel 后 `write()` 抛 IOException；chunk/flush 行为。
+> * Java `ZipOutputStream`：putNextEntry/closeEntry/finish 的顺序写入语义，支持流式产出 ZIP。
+> * Spring DataBuffer 抽象：DataBufferFactory、池化/包装等能力（理解 WebFlux 写出模型有帮助）。
