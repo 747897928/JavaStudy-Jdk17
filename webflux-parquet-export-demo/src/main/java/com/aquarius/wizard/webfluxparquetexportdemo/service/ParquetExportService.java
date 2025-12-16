@@ -25,6 +25,8 @@ import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.apache.parquet.schema.Type;
 import org.reactivestreams.Publisher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferFactory;
 import org.springframework.core.io.buffer.DataBufferUtils;
@@ -41,8 +43,8 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -73,6 +75,8 @@ import java.util.zip.ZipOutputStream;
  */
 @Service
 public class ParquetExportService {
+
+    private static final Logger log = LoggerFactory.getLogger(ParquetExportService.class);
 
     /**
      * CSV encoding used by this demo.
@@ -141,8 +145,9 @@ public class ParquetExportService {
                     }
                     try {
                         Files.deleteIfExists(parquetPath);
-                    } catch (IOException ignored) {
-                        // Best effort cleanup.
+                    } catch (IOException e) {
+                        // Best effort cleanup. The temp file may already be deleted or locked by OS/AV.
+                        log.debug("Failed to delete temporary parquet: {}", parquetPath, e);
                     }
                 })
                 .subscribeOn(Schedulers.fromExecutor(exportExecutor))
@@ -189,6 +194,9 @@ public class ParquetExportService {
         // 2) Simulate: download stream -> local file.
         try (InputStream inputStream = Files.newInputStream(remoteParquet)) {
             Files.copy(inputStream, localParquet, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            Files.deleteIfExists(localParquet);
+            throw e;
         } finally {
             Files.deleteIfExists(remoteParquet);
         }
@@ -270,11 +278,25 @@ public class ParquetExportService {
         if (lastPart.endsWith(".parquet")) {
             lastPart = lastPart.substring(0, lastPart.length() - ".parquet".length());
         }
-        // Keep only [A-Za-z0-9_], replace others with underscore.
-        String sanitized = lastPart.replaceAll("[^A-Za-z0-9_]", "_");
-        // Trim underscores and collapse multiple underscores.
-        sanitized = sanitized.replaceAll("_+", "_").replaceAll("^_+", "").replaceAll("_+$", "");
-        return sanitized;
+        // Keep only [A-Za-z0-9_], replace others with underscore, and collapse multiple underscores.
+        StringBuilder sb = new StringBuilder(lastPart.length());
+        char prev = 0;
+        for (int i = 0; i < lastPart.length(); i++) {
+            char c = lastPart.charAt(i);
+            char normalized = isAllowedNameChar(c) ? c : '_';
+            if (normalized == '_' && prev == '_') {
+                continue;
+            }
+            sb.append(normalized);
+            prev = normalized;
+        }
+        String sanitized = sb.toString();
+        // Trim underscores.
+        int start = 0;
+        int end = sanitized.length();
+        while (start < end && sanitized.charAt(start) == '_') start++;
+        while (end > start && sanitized.charAt(end - 1) == '_') end--;
+        return sanitized.substring(start, end);
     }
 
     private String randomSafeName(int length) {
@@ -285,6 +307,13 @@ public class ParquetExportService {
             sb.append(alphabet[random.nextInt(alphabet.length)]);
         }
         return sb.toString();
+    }
+
+    private static boolean isAllowedNameChar(char c) {
+        return (c >= 'a' && c <= 'z')
+                || (c >= 'A' && c <= 'Z')
+                || (c >= '0' && c <= '9')
+                || c == '_';
     }
 
     /**
