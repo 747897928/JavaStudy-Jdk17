@@ -92,24 +92,24 @@ public class DemoController {
         response.getHeaders().set(HttpHeaders.CONTENT_DISPOSITION,
                 "attachment; filename=\"" + spec.filename() + "\"");
 
-        Publisher<DataBuffer> body = service.export(parquetFile.toPath(), format, response.bufferFactory());
+        Publisher<DataBuffer> body = service.export(parquetFile.toPath(), format, response.bufferFactory(), spec.baseName());
         return response.writeWith(body);
     }
 
-    private static void applyStandardDownloadHeaders(ServerHttpResponse response) {
+    private void applyStandardDownloadHeaders(ServerHttpResponse response) {
         response.getHeaders().set(HttpHeaders.CACHE_CONTROL, "no-store");
         response.getHeaders().set(HttpHeaders.PRAGMA, "no-cache");
         response.getHeaders().set("X-Content-Type-Options", "nosniff");
     }
 
-    private record DownloadSpec(String filename, MediaType contentType) {
+    private record DownloadSpec(String baseName, String filename, MediaType contentType) {
         private static DownloadSpec from(FileFormat format, File parquetFile) {
             String parquetFilename = parquetFile.getName();
             String baseName = baseNameFromParquetFilename(parquetFilename);
             return switch (format) {
-                case PARQUET -> new DownloadSpec(parquetFilename, MediaType.APPLICATION_OCTET_STREAM);
-                case CSV -> new DownloadSpec(baseName + ".csv", new MediaType("text", "csv", ParquetExportService.CSV_CHARSET));
-                case ZIP -> new DownloadSpec(baseName + ".zip", new MediaType("application", "zip"));
+                case PARQUET -> new DownloadSpec(baseName, parquetFilename, MediaType.APPLICATION_OCTET_STREAM);
+                case CSV -> new DownloadSpec(baseName, baseName + ".csv", new MediaType("text", "csv", ParquetExportService.CSV_CHARSET));
+                case ZIP -> new DownloadSpec(baseName, baseName + ".zip", new MediaType("application", "zip"));
             };
         }
 

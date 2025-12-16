@@ -22,6 +22,7 @@ mvn -pl webflux-parquet-export-demo spring-boot:run
 服务启动后默认端口 `8080`（见 `src/main/resources/application.yml`）。
 
 说明：
+- 运行前建议先确认 `mvn -v` 输出的 `Java version` 是 17（否则会出现 `UnsupportedClassVersionError`）。
 - 该模块为了避免父工程里“锁死的旧依赖版本（如 Jackson 2.11、SLF4J 1.7）”与 Spring Boot 3.5.6 冲突，模块自身使用 `spring-boot-starter-parent:3.5.6` 作为 parent。
 - 你本机 Maven 版本较旧（3.3.9），模块在 `pom.xml` 里显式锁定了 `maven-compiler-plugin` 等插件版本以保证可以构建运行。
 
@@ -52,18 +53,20 @@ curl -L -o data.parquet "http://localhost:8080/demo/download?format=parquet"
 ### 3.2 流式 CSV 下载（不落地、不攒内存）
 
 ```bash
-curl -L -o data.csv "http://localhost:8080/demo/download?format=csv"
+curl -L -OJ "http://localhost:8080/demo/download?format=csv"
 ```
 
 ### 3.3 流式 ZIP(CSV) 下载（不落地、不攒内存）
 
 ```bash
-curl -L -o data.zip "http://localhost:8080/demo/download?format=zip"
-unzip -l data.zip
-unzip -p data.zip data.csv | head
+curl -L -OJ "http://localhost:8080/demo/download?format=zip"
+# 文件名来自响应头 Content-Disposition（示例：abc_123.zip）
+unzip -l abc_123.zip
+# ZIP 里只有一个 CSV entry，名称与 parquet 原文件 baseName 一致（示例：abc_123.csv）
+unzip -p abc_123.zip abc_123.csv | head
 ```
 
-ZIP 内只有一个 entry：`data.csv`。
+ZIP 内只有一个 entry：`<baseName>.csv`（baseName 来自 parquet 原文件名去掉 `.parquet`）。
 
 ## 4. 为什么不用 Flux<Map<...>>
 
@@ -99,7 +102,7 @@ WebFlux 基于 Reactive Streams：下游会通过 `request(n)` 表示“我现�
 
 ZIP 的 entry 写入是流式的：
 
-1. `ZipOutputStream.putNextEntry(new ZipEntry("data.csv"))`
+1. `ZipOutputStream.putNextEntry(new ZipEntry("<baseName>.csv"))`
 2. 把 CSV 内容直接写到 `ZipOutputStream`（此时会边写边 deflate 压缩）
 3. `closeEntry()` / `finish()`
 

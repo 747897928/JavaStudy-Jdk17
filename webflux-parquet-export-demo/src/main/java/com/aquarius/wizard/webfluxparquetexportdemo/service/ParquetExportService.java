@@ -60,7 +60,7 @@ import java.util.zip.ZipOutputStream;
 /**
  * Core: Parquet -> CSV/ZIP streaming export.
  * <p>
- * Key ideas (beginner-friendly):
+ * Key ideas:
  * <ul>
  *   <li><b>Do not build a "row object stream"</b> like {@code Flux<Map<...>>}.
  *       If the client is slow, those per-row objects can accumulate and cause OOM.</li>
@@ -320,6 +320,21 @@ public class ParquetExportService {
      * Export as PARQUET/CSV/ZIP(CSV) using streaming.
      */
     public Publisher<DataBuffer> export(java.nio.file.Path parquetFile, FileFormat format, DataBufferFactory bufferFactory) {
+        return export(parquetFile, format, bufferFactory, "data");
+    }
+
+    /**
+     * Export with a preferred base name.
+     * <p>
+     * For ZIP, this controls the CSV entry name inside the ZIP: {@code <baseName>.csv}.
+     */
+    public Publisher<DataBuffer> export(java.nio.file.Path parquetFile,
+                                        FileFormat format,
+                                        DataBufferFactory bufferFactory,
+                                        String baseName) {
+        String safeBaseName = (baseName == null || baseName.isBlank()) ? "data" : baseName;
+        String zipEntryName = sanitizeZipEntryName(safeBaseName + ".csv");
+
         return switch (format) {
             case PARQUET -> DataBufferUtils.read(parquetFile, bufferFactory, props.getChunkSize());
             // CSV/ZIP are generated on-the-fly without creating a full file in memory.
@@ -330,7 +345,7 @@ public class ParquetExportService {
                     props.getChunkSize()
             );
             case ZIP -> DataBufferUtils.outputStreamPublisher(
-                    os -> writeZipCsvTo(os, parquetFile),
+                    os -> writeZipCsvTo(os, parquetFile, zipEntryName),
                     bufferFactory,
                     exportExecutor,
                     props.getChunkSize()
@@ -338,7 +353,7 @@ public class ParquetExportService {
         };
     }
 
-    private void writeZipCsvTo(OutputStream rawOut, java.nio.file.Path parquetFile) {
+    private void writeZipCsvTo(OutputStream rawOut, java.nio.file.Path parquetFile, String zipEntryName) {
         try {
             // Important: the OutputStream provided by outputStreamPublisher is owned by Spring.
             // We must NOT close it ourselves (otherwise the HTTP response breaks).
@@ -355,7 +370,7 @@ public class ParquetExportService {
                 }
                 zos.setLevel(level);
 
-                zos.putNextEntry(new ZipEntry("data.csv"));
+                zos.putNextEntry(new ZipEntry(zipEntryName));
 
                 // We write CSV bytes directly into the ZIP entry stream.
                 // The CSV byte encoding is controlled by CSV_CHARSET when we convert String -> bytes.
@@ -373,6 +388,19 @@ public class ParquetExportService {
             }
             throw new UncheckedIOException(e);
         }
+    }
+
+    private static String sanitizeZipEntryName(String name) {
+        if (name == null || name.isBlank()) {
+            return "data.csv";
+        }
+        // Avoid path traversal/dir creation in zip entry names.
+        String sanitized = name.replace('\\', '_').replace('/', '_');
+        // Avoid weird edge cases like "." or ".." as entry names.
+        if (sanitized.equals(".") || sanitized.equals("..")) {
+            return "data.csv";
+        }
+        return sanitized;
     }
 
     private void writeCsvTo(OutputStream out, java.nio.file.Path parquetFile) {

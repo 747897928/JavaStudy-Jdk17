@@ -10,7 +10,7 @@
 - 文件规模跨度大：几十 KB、几 MB、几十 MB、几百 MB、2GB 甚至更大
 - Parquet 压缩率高：例如 16MB Parquet 可能解压展开为 600MB+ CSV（这也是 Parquet → CSV 的典型现象）
 - JVM 内存上限不高（例如 4GB），不能把 CSV/ZIP 全量攒内存，也不希望先落地 CSV 再 zip（会占用大量磁盘并慢）
-- 最终交付：HTTP 下载一个 ZIP 文件（ZIP 内只有 `data.csv`）
+- 最终交付：HTTP 下载一个 ZIP 文件（ZIP 内只有一个 CSV entry，名称为 `<baseName>.csv`）
 
 关键风险：
 
@@ -40,7 +40,7 @@ ParquetReader<Group>
    ↓  (read one row)
 Group → (format one row) → CSV bytes
    ↓  (write)
-ZipOutputStream(entry=data.csv)  // ZIP 模式
+ZipOutputStream(entry=<baseName>.csv)  // ZIP 模式
    ↓  (write to response OutputStream)
 DataBufferUtils.outputStreamPublisher(...)
    ↓  (Flux<DataBuffer>)
@@ -85,8 +85,8 @@ Spring Framework 6.1+ 提供：
 
 ZIP 的中央目录在末尾，所以：
 
-- `putNextEntry("data.csv")` 之后写 entry 内容，可以持续写出并持续被压缩
-- 但只有写到 `closeEntry()` + `finish()`（或 `close()`）后，ZIP 才是完整可解压文件
+- `putNextEntry("<baseName>.csv")` 之后写 entry 内容，可以持续写出并持续被压缩
+  - 但只有写到 `closeEntry()` + `finish()`（或 `close()`）后，ZIP 才是完整可解压文件
 
 ### 3.2 为什么要 `NonClosingOutputStream`
 
