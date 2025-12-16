@@ -90,6 +90,11 @@ WebFlux 基于 Reactive Streams：下游会通过 `request(n)` 表示“我现�
 
 - `src/main/java/com/aquarius/wizard/webfluxparquetexportdemo/service/ParquetExportService.java`
 
+补充（小文件/大文件都覆盖的“体验优化”）：
+- CSV 写完 header 会立刻 `flush()` 一次，降低“首包延迟”（小输出也能尽快开始下发）
+- 后续按“写出字节阈值”低频 `flush()`（配置项 `demo.export.csv-flush-every-bytes`），避免每行 flush 的性能灾难
+- ZIP 默认不做周期性 flush（或设置更大的阈值 `demo.export.zip-flush-every-bytes`），避免频繁 flush 影响 deflate 压缩效率
+
 ## 7. 为什么 ZipOutputStream 可以边写边压缩
 
 ZIP 的 entry 写入是流式的：
@@ -109,3 +114,7 @@ CSV 本质是文本格式；为了尽量做到 `byte[]` 可逆，本项目约定
 - 仍按 RFC4180 最小规则进行 CSV 转义（包含逗号/引号/换行就加引号，引号双写）
 
 如果你希望跨系统/工具更通用，建议把 BINARY 输出改成 Base64（本项目按“原始 bytes”实现，方便验证你们的需求）。
+
+## 9. 笔记
+
+- `docs/streaming-export-notes.md`

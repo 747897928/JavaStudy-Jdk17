@@ -49,6 +49,14 @@ public class DemoController {
     /**
      * Download as parquet/csv/zip:
      * {@code GET /demo/download?format=parquet|csv|zip}
+     * <p>
+     * Notes for beginners:
+     * <ul>
+     *   <li>We return the response body as a {@link Publisher} of {@link DataBuffer}.</li>
+     *   <li>{@code response.writeWith(...)} is backpressure-aware: if the client is slow, the server writes slower.</li>
+     *   <li>For CSV/ZIP formats, we use Spring's {@code DataBufferUtils.outputStreamPublisher} to bridge blocking IO
+     *       (ParquetReader/ZipOutputStream) into a streaming HTTP response without keeping the whole file in memory.</li>
+     * </ul>
      */
     @GetMapping("/download")
     public Mono<Void> download(@RequestParam(defaultValue = "zip") FileFormat format,

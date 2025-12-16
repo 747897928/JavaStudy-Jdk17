@@ -2,8 +2,10 @@ package com.aquarius.wizard.webfluxparquetexportdemo.service;
 
 import com.aquarius.wizard.webfluxparquetexportdemo.config.ExportProperties;
 import com.aquarius.wizard.webfluxparquetexportdemo.model.FileFormat;
+import com.aquarius.wizard.webfluxparquetexportdemo.util.CountingOutputStream;
 import com.aquarius.wizard.webfluxparquetexportdemo.util.CsvUtil;
 import com.aquarius.wizard.webfluxparquetexportdemo.util.Int96Util;
+import com.aquarius.wizard.webfluxparquetexportdemo.util.NonClosingOutputStream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;
@@ -34,6 +36,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Instant;
@@ -47,11 +50,18 @@ import java.util.zip.ZipOutputStream;
 /**
  * Core: Parquet -> CSV/ZIP streaming export.
  * <p>
- * Key points:
- * - Do NOT build a {@code Flux<Map<...>>} (each row as a Map) because it can easily buffer unboundedly when the client
- *   is slow, leading to OOM.
- * - Bridge blocking IO (ParquetReader + OutputStream writes) via {@link DataBufferUtils#outputStreamPublisher},
- *   so backpressure is applied through blocking writes.
+ * Key ideas (beginner-friendly):
+ * <ul>
+ *   <li><b>Do not build a "row object stream"</b> like {@code Flux<Map<...>>}.
+ *       If the client is slow, those per-row objects can accumulate and cause OOM.</li>
+ *   <li><b>Read one row, write one row</b>: {@link ParquetReader} reads one {@link Group} at a time, we immediately
+ *       convert it to CSV bytes and write to an {@link OutputStream}.</li>
+ *   <li><b>Bridge blocking IO to WebFlux</b> with {@link DataBufferUtils#outputStreamPublisher}:
+ *       we write to an {@link OutputStream} on a dedicated thread pool and Spring converts written bytes to
+ *       {@link DataBuffer}s for the HTTP response.</li>
+ *   <li><b>Backpressure</b>: when the client is slow, HTTP writes become slow; that slowness is naturally propagated
+ *       back to our loop (we stop producing data too fast), so memory stays bounded.</li>
+ * </ul>
  */
 @Service
 public class ParquetExportService {
@@ -174,6 +184,7 @@ public class ParquetExportService {
     public Publisher<DataBuffer> export(java.nio.file.Path parquetFile, FileFormat format, DataBufferFactory bufferFactory) {
         return switch (format) {
             case PARQUET -> DataBufferUtils.read(parquetFile, bufferFactory, props.getChunkSize());
+            // CSV/ZIP are generated on-the-fly without creating a full file in memory.
             case CSV -> DataBufferUtils.outputStreamPublisher(
                     os -> writeCsvTo(os, parquetFile),
                     bufferFactory,
@@ -191,18 +202,30 @@ public class ParquetExportService {
 
     private void writeZipCsvTo(OutputStream rawOut, java.nio.file.Path parquetFile) {
         try {
-            BufferedOutputStream bos = new BufferedOutputStream(rawOut, props.getOutputBufferSize());
-            try (ZipOutputStream zos = new ZipOutputStream(bos, CSV_CHARSET)) {
+            // Important: the OutputStream provided by outputStreamPublisher is owned by Spring.
+            // We must NOT close it ourselves (otherwise the HTTP response breaks).
+            OutputStream nonClosing = new NonClosingOutputStream(rawOut);
+
+            // Add a small buffer to reduce the number of system calls / tiny writes.
+            BufferedOutputStream bos = new BufferedOutputStream(nonClosing, props.getOutputBufferSize());
+
+            // Charset here is for ZIP metadata (entry names, flags). It does NOT affect CSV content bytes we write.
+            try (ZipOutputStream zos = new ZipOutputStream(bos, StandardCharsets.UTF_8)) {
                 int level = props.getZipLevel();
-                if (level < Deflater.BEST_SPEED || level > Deflater.BEST_COMPRESSION) {
+                if (level < Deflater.NO_COMPRESSION || level > Deflater.BEST_COMPRESSION) {
                     level = Deflater.BEST_SPEED;
                 }
                 zos.setLevel(level);
 
                 zos.putNextEntry(new ZipEntry("data.csv"));
-                writeCsvTo(zos, parquetFile);
+
+                // We write CSV bytes directly into the ZIP entry stream.
+                // The CSV byte encoding is controlled by CSV_CHARSET when we convert String -> bytes.
+                CountingOutputStream countingZip = new CountingOutputStream(zos);
+                writeCsvTo(countingZip, parquetFile, props.isZipFlushHeader(), props.getZipFlushEveryBytes(), false);
                 zos.closeEntry();
 
+                // finish() writes the ZIP central directory (required for a valid ZIP file).
                 zos.finish();
                 zos.flush();
             }
@@ -215,16 +238,37 @@ public class ParquetExportService {
     }
 
     private void writeCsvTo(OutputStream out, java.nio.file.Path parquetFile) {
+        writeCsvTo(out, parquetFile, props.isCsvFlushHeader(), props.getCsvFlushEveryBytes(), true);
+    }
+
+    private void writeCsvTo(OutputStream rawOut,
+                            java.nio.file.Path parquetFile,
+                            boolean flushHeader,
+                            long flushEveryBytes,
+                            boolean wrapPlainCsvBuffer) {
         Configuration conf = new Configuration();
         Path hPath = new Path(parquetFile.toUri());
 
-        long flushEvery = Math.max(1, props.getFlushEveryRows());
+        long flushThresholdBytes = Math.max(0, flushEveryBytes);
         long maxRows = props.getMaxRows() <= 0 ? Long.MAX_VALUE : props.getMaxRows();
 
         try {
             MessageType schema = readSchema(conf, hPath);
 
-            CsvUtil.writeHeader(out, schema, CSV_CHARSET);
+            OutputStream out = rawOut;
+            if (wrapPlainCsvBuffer) {
+                // Plain CSV writing can be very "chatty" (commas, quotes, newlines).
+                // BufferedOutputStream reduces the number of underlying write() calls.
+                out = new BufferedOutputStream(new NonClosingOutputStream(out), props.getOutputBufferSize());
+            }
+            CountingOutputStream countingOut = (out instanceof CountingOutputStream c) ? c : new CountingOutputStream(out);
+
+            CsvUtil.writeHeader(countingOut, schema, CSV_CHARSET);
+            if (flushHeader) {
+                // Flush once after header so small outputs start downloading immediately.
+                countingOut.flush();
+            }
+            long lastFlushedAt = countingOut.getCount();
 
             GroupReadSupport readSupport = new GroupReadSupport();
             try (ParquetReader<Group> reader = ParquetReader.builder(readSupport, hPath).withConf(conf).build()) {
@@ -237,9 +281,12 @@ public class ParquetExportService {
                     }
 
                     try {
-                        CsvUtil.writeRow(out, g, schema, CSV_CHARSET, this::cellValueToCell);
-                        if (row % flushEvery == 0) {
-                            out.flush();
+                        CsvUtil.writeRow(countingOut, g, schema, CSV_CHARSET, this::cellValueToCell);
+                        if (flushThresholdBytes > 0 && (countingOut.getCount() - lastFlushedAt) >= flushThresholdBytes) {
+                            // Flush is for "latency/progress feel", not for memory safety.
+                            // Memory safety mainly comes from streaming + backpressure + bounded buffers.
+                            countingOut.flush();
+                            lastFlushedAt = countingOut.getCount();
                         }
                     } catch (IOException e) {
                         if (isClientAbort(e)) {
@@ -250,7 +297,8 @@ public class ParquetExportService {
                 }
             }
 
-            out.flush();
+            // Final flush to push out remaining buffered bytes.
+            countingOut.flush();
         } catch (IOException e) {
             if (isClientAbort(e)) {
                 return;

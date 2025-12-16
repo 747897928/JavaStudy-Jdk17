@@ -7,8 +7,14 @@ demo:
     chunk-size: 65536
     # Buffer used before ZipOutputStream to reduce syscalls
     output-buffer-size: 65536
-    # Flush OutputStream every N rows (avoid flush per row)
-    flush-every-rows: 10000
+    # CSV: flush header immediately (reduce first-byte latency for small outputs)
+    csv-flush-header: true
+    # CSV: flush every N bytes (set 0 to disable periodic flushing)
+    csv-flush-every-bytes: 1048576 # 1MB
+    # ZIP: header flush is optional (may reduce compression efficiency slightly)
+    zip-flush-header: false
+    # ZIP: keep much larger than CSV or set 0 to disable periodic flushing
+    zip-flush-every-bytes: 0
     # Safety cap: export at most N rows
     max-rows: 5000000
     # Zip deflater level: 1(BEST_SPEED) / 6(DEFAULT) / 9(BEST)
@@ -16,4 +22,3 @@ demo:
     executor:
       pool-size: 4
       queue-capacity: 64
-

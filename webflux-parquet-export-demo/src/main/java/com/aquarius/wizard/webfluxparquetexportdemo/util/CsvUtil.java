@@ -13,6 +13,13 @@ import java.nio.charset.Charset;
  * - no per-row Map allocation
  * - writes directly to OutputStream
  * - RFC4180 minimal escaping (comma, quote, CR/LF => quoted; quote => doubled)
+ * <p>
+ * Beginner note:
+ * <ul>
+ *   <li>CSV is just bytes. We write bytes to the HTTP response as we read rows from Parquet.</li>
+ *   <li>For {@code BINARY} columns, this demo writes the raw bytes into CSV and relies on the CSV file being
+ *       interpreted as ISO-8859-1 to keep a 1:1 mapping between byte values (0..255) and characters.</li>
+ * </ul>
  */
 public final class CsvUtil {
 
@@ -129,4 +136,3 @@ public final class CsvUtil {
         out.write('"');
     }
 }
-
