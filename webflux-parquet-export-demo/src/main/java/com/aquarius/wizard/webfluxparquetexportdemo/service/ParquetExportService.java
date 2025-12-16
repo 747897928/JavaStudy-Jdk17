@@ -34,6 +34,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
@@ -41,11 +42,13 @@ import java.math.BigInteger;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.Deflater;
@@ -77,7 +80,7 @@ public class ParquetExportService {
      * For BINARY: we output raw bytes to the CSV stream and ask the client to interpret CSV as ISO-8859-1 so that
      * bytes(0..255) map 1:1 to characters.
      */
-    public static final Charset CSV_CHARSET = Charset.forName("ISO-8859-1");
+    public static final Charset CSV_CHARSET = StandardCharsets.ISO_8859_1;
 
     private static final String DEMO_SCHEMA = """
             message demo {
@@ -116,6 +119,36 @@ public class ParquetExportService {
         return p;
     }
 
+    public record TemporaryParquet(java.nio.file.Path localParquetPath, String baseName) {
+    }
+
+    /**
+     * Simulate: user provides a Parquet download URL (s3a:// or gs://), we obtain an InputStream,
+     * then write that InputStream to a local temp parquet file for {@link ParquetReader} to read.
+     * <p>
+     * In this demo project we don't actually call S3/GCS. Instead, we generate a parquet file with random size and name,
+     * open it as an InputStream, and copy it to another "local" temp parquet file (to exercise the same code path).
+     */
+    public Mono<TemporaryParquet> prepareTemporaryParquet(String sourceUrl, Long rows) {
+        return Mono.fromCallable(() -> prepareTemporaryParquetBlocking(sourceUrl, rows))
+                .subscribeOn(Schedulers.fromExecutor(exportExecutor));
+    }
+
+    public Mono<Void> deleteTemporaryParquet(java.nio.file.Path parquetPath) {
+        return Mono.fromRunnable(() -> {
+                    if (parquetPath == null) {
+                        return;
+                    }
+                    try {
+                        Files.deleteIfExists(parquetPath);
+                    } catch (IOException ignored) {
+                        // Best effort cleanup.
+                    }
+                })
+                .subscribeOn(Schedulers.fromExecutor(exportExecutor))
+                .then();
+    }
+
     /**
      * Generate a Parquet file at {@code ./data/demo.parquet} (relative to user.dir).
      */
@@ -129,13 +162,47 @@ public class ParquetExportService {
         Files.createDirectories(dir);
 
         java.nio.file.Path out = dir.resolve("demo.parquet");
+        generateParquetFile(out, rows, new Random(1234567L));
+        demoParquetPath.set(out);
+        return out;
+    }
+
+    private TemporaryParquet prepareTemporaryParquetBlocking(String sourceUrl, Long rows) throws IOException {
+        java.nio.file.Path tmpDir = Paths.get(System.getProperty("user.dir"), "data", "tmp");
+        Files.createDirectories(tmpDir);
+
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        String sourceBaseName = sanitizeBaseNameFromUrl(sourceUrl);
+        String randomSuffix = randomSafeName(8);
+        String baseName = sourceBaseName.isEmpty() ? randomSafeName(12) : sourceBaseName + "_" + randomSuffix;
+
+        long rowsToGenerate = (rows != null && rows > 0) ? rows : pickRandomRows();
+
+        // "Remote" parquet file (simulated).
+        java.nio.file.Path remoteParquet = tmpDir.resolve(baseName + "_remote.parquet");
+        // "Local" parquet file (what our export pipeline will read).
+        java.nio.file.Path localParquet = tmpDir.resolve(baseName + ".parquet");
+
+        // 1) Simulate remote object: generate parquet to remoteParquet.
+        generateParquetFile(remoteParquet, rowsToGenerate, new Random(random.nextLong()));
+
+        // 2) Simulate: download stream -> local file.
+        try (InputStream inputStream = Files.newInputStream(remoteParquet)) {
+            Files.copy(inputStream, localParquet, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(remoteParquet);
+        }
+
+        return new TemporaryParquet(localParquet, baseName);
+    }
+
+    private void generateParquetFile(java.nio.file.Path out, long rows, Random randomGenerator) throws IOException {
 
         MessageType schema = MessageTypeParser.parseMessageType(DEMO_SCHEMA);
         Configuration conf = new Configuration();
         GroupWriteSupport.setSchema(schema, conf);
 
         SimpleGroupFactory factory = new SimpleGroupFactory(schema);
-        Random random = new Random(1234567L);
 
         try (ParquetWriter<Group> writer =
                      new ParquetWriter<>(
@@ -155,21 +222,21 @@ public class ParquetExportService {
                 Group rowGroup = factory.newGroup();
 
                 // Make some columns null randomly (optional fields), to test: null -> empty
-                if (random.nextInt(10) != 0) rowGroup.add("i32", random.nextInt());
-                if (random.nextInt(10) != 0) rowGroup.add("i64", random.nextLong());
-                if (random.nextInt(10) != 0) {
-                    Instant now = Instant.ofEpochMilli(System.currentTimeMillis() + random.nextInt(1_000_000));
+                if (randomGenerator.nextInt(10) != 0) rowGroup.add("i32", randomGenerator.nextInt());
+                if (randomGenerator.nextInt(10) != 0) rowGroup.add("i64", randomGenerator.nextLong());
+                if (randomGenerator.nextInt(10) != 0) {
+                    Instant now = Instant.ofEpochMilli(System.currentTimeMillis() + randomGenerator.nextInt(1_000_000));
                     rowGroup.add("t96", Binary.fromConstantByteArray(Int96Util.instantToInt96(now)));
                 }
-                if (random.nextInt(10) != 0) rowGroup.add("f32", random.nextFloat());
-                if (random.nextInt(10) != 0) rowGroup.add("b", random.nextBoolean());
-                if (random.nextInt(10) != 0) rowGroup.add("d64", random.nextDouble());
+                if (randomGenerator.nextInt(10) != 0) rowGroup.add("f32", randomGenerator.nextFloat());
+                if (randomGenerator.nextInt(10) != 0) rowGroup.add("b", randomGenerator.nextBoolean());
+                if (randomGenerator.nextInt(10) != 0) rowGroup.add("d64", randomGenerator.nextDouble());
 
-                if (random.nextInt(10) != 0) {
+                if (randomGenerator.nextInt(10) != 0) {
                     // ASCII bytes are easier to eyeball in CSV, but export logic supports arbitrary bytes.
                     byte[] randomAsciiBytes = new byte[16];
                     for (int byteIndex = 0; byteIndex < randomAsciiBytes.length; byteIndex++) {
-                        int ch = 33 + random.nextInt(94); // '!'..'~'
+                        int ch = 33 + randomGenerator.nextInt(94); // '!'..'~'
                         randomAsciiBytes[byteIndex] = (byte) ch;
                     }
                     rowGroup.add("bin", Binary.fromConstantByteArray(randomAsciiBytes));
@@ -178,9 +245,46 @@ public class ParquetExportService {
                 writer.write(rowGroup);
             }
         }
+    }
 
-        demoParquetPath.set(out);
-        return out;
+    private long pickRandomRows() {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        // Weighted distribution to cover small/medium/large files in a dev-friendly way.
+        int bucket = random.nextInt(100);
+        if (bucket < 40) {
+            return random.nextLong(200, 10_000);           // tiny/small
+        }
+        if (bucket < 85) {
+            return random.nextLong(50_000, 400_000);       // medium
+        }
+        return random.nextLong(700_000, 2_000_000);        // large
+    }
+
+    private static String sanitizeBaseNameFromUrl(String sourceUrl) {
+        if (sourceUrl == null || sourceUrl.isBlank()) {
+            return "";
+        }
+        String trimmed = sourceUrl.trim();
+        int slash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf(':'));
+        String lastPart = (slash >= 0) ? trimmed.substring(slash + 1) : trimmed;
+        if (lastPart.endsWith(".parquet")) {
+            lastPart = lastPart.substring(0, lastPart.length() - ".parquet".length());
+        }
+        // Keep only [A-Za-z0-9_], replace others with underscore.
+        String sanitized = lastPart.replaceAll("[^A-Za-z0-9_]", "_");
+        // Trim underscores and collapse multiple underscores.
+        sanitized = sanitized.replaceAll("_+", "_").replaceAll("^_+", "").replaceAll("_+$", "");
+        return sanitized;
+    }
+
+    private String randomSafeName(int length) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        final char[] alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_".toCharArray();
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(alphabet[random.nextInt(alphabet.length)]);
+        }
+        return sb.toString();
     }
 
     /**

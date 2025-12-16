@@ -14,7 +14,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
-import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -48,7 +47,13 @@ public class DemoController {
 
     /**
      * Download as parquet/csv/zip:
-     * {@code GET /demo/download?format=parquet|csv|zip}
+     * {@code GET /demo/download?format=parquet|csv|zip&source=s3a://bucket/key.parquet}
+     * <p>
+     * In production, {@code source} would be used to open a remote InputStream (S3/GCS),
+     * download the Parquet to a local temp file, then export it.
+     * <p>
+     * In this demo we simulate that flow by generating a random parquet file and copying it via InputStream,
+     * then deleting the temp parquet after the response completes (or when the client cancels).
      * <p>
      * Notes for beginners:
      * <ul>
@@ -60,37 +65,47 @@ public class DemoController {
      */
     @GetMapping("/download")
     public Mono<Void> download(@RequestParam(defaultValue = "zip") FileFormat format,
+                               @RequestParam(required = false) String source,
+                               @RequestParam(required = false) Long rows,
                                ServerHttpResponse response) {
-        Path parquet = service.getDemoParquetOrThrow();
+        return Mono.usingWhen(
+                service.prepareTemporaryParquet(source, rows),
+                temporaryParquet -> {
+                    java.nio.file.Path localParquetPath = temporaryParquet.localParquetPath();
 
-        response.getHeaders().set(HttpHeaders.CACHE_CONTROL, "no-store");
-        response.getHeaders().set(HttpHeaders.PRAGMA, "no-cache");
-        response.getHeaders().set("X-Content-Type-Options", "nosniff");
+                    response.getHeaders().set(HttpHeaders.CACHE_CONTROL, "no-store");
+                    response.getHeaders().set(HttpHeaders.PRAGMA, "no-cache");
+                    response.getHeaders().set("X-Content-Type-Options", "nosniff");
 
-        String filename;
-        MediaType contentType;
+                    String filename;
+                    MediaType contentType;
 
-        switch (format) {
-            case PARQUET -> {
-                filename = "data.parquet";
-                contentType = MediaType.APPLICATION_OCTET_STREAM;
-            }
-            case CSV -> {
-                filename = "data.csv";
-                contentType = new MediaType("text", "csv", ParquetExportService.CSV_CHARSET);
-            }
-            case ZIP -> {
-                filename = "data.zip";
-                contentType = new MediaType("application", "zip");
-            }
-            default -> throw new IllegalArgumentException("Unsupported format: " + format);
-        }
+                    switch (format) {
+                        case PARQUET -> {
+                            filename = temporaryParquet.baseName() + ".parquet";
+                            contentType = MediaType.APPLICATION_OCTET_STREAM;
+                        }
+                        case CSV -> {
+                            filename = temporaryParquet.baseName() + ".csv";
+                            contentType = new MediaType("text", "csv", ParquetExportService.CSV_CHARSET);
+                        }
+                        case ZIP -> {
+                            filename = temporaryParquet.baseName() + ".zip";
+                            contentType = new MediaType("application", "zip");
+                        }
+                        default -> throw new IllegalArgumentException("Unsupported format: " + format);
+                    }
 
-        response.getHeaders().setContentType(contentType);
-        response.getHeaders().set(HttpHeaders.CONTENT_DISPOSITION,
-                "attachment; filename=\"" + filename + "\"");
+                    response.getHeaders().setContentType(contentType);
+                    response.getHeaders().set(HttpHeaders.CONTENT_DISPOSITION,
+                            "attachment; filename=\"" + filename + "\"");
 
-        Publisher<DataBuffer> body = service.export(parquet, format, response.bufferFactory());
-        return response.writeWith(body);
+                    Publisher<DataBuffer> body = service.export(localParquetPath, format, response.bufferFactory());
+                    return response.writeWith(body);
+                },
+                temporaryParquet -> service.deleteTemporaryParquet(temporaryParquet.localParquetPath()),
+                (temporaryParquet, error) -> service.deleteTemporaryParquet(temporaryParquet.localParquetPath()),
+                temporaryParquet -> service.deleteTemporaryParquet(temporaryParquet.localParquetPath())
+        );
     }
 }

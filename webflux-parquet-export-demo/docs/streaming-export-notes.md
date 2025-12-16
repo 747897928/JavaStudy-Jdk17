@@ -199,6 +199,21 @@ CSV 是文本格式；但你们的需求是不做 Base64，而要尽量“原始
 - `isClientAbort(IOException)` 做了常见错误消息匹配
 - 捕获后直接 return
 
+## 6.1 本地临时 Parquet 文件清理（完成/取消都删除）
+
+真实业务里，Parquet 往往来自 S3/GCS，需要先“流式下载到本地临时文件”，再给 `ParquetReader` 用。
+
+本示例的 `GET /demo/download` 会：
+
+1. 模拟拿到一个“远端 InputStream”（通过先生成一个 *remote* parquet 文件，再用 InputStream 复制到 *local* parquet 文件）
+2. 使用 *local* parquet 文件走 Parquet → CSV/ZIP 的导出流程
+3. **当下载完成、报错、或客户端取消（cancel）时，删除这个本地临时 parquet 文件**
+
+实现方式：
+
+- `DemoController` 使用 `Mono.usingWhen(...)` 包住一次请求的临时文件资源
+- 在 `onComplete/onError/onCancel` 都调用 `deleteTemporaryParquet(...)` 做 best-effort 删除
+
 ## 7. 线程模型：不要堵 Netty event-loop
 
 ParquetReader、ZipOutputStream 都是阻塞 IO/CPU 操作，因此必须在专用线程池执行。
