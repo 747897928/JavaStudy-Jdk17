@@ -1,6 +1,12 @@
 server:
   port: 8080
 
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
 demo:
   export:
     # DataBuffer chunk size for HTTP response streaming

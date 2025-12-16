@@ -25,12 +25,20 @@
         <java.version>17</java.version>
         <parquet.version>1.16.0</parquet.version>
         <hadoop.version>3.4.1</hadoop.version>
+        <springdoc.version>2.6.0</springdoc.version>
     </properties>
 
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+
+        <!-- Swagger/OpenAPI UI for Spring WebFlux -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
+            <version>${springdoc.version}</version>
         </dependency>
 
         <dependency>
