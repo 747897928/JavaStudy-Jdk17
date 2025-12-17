@@ -25,6 +25,6 @@ demo:
     max-rows: 5000000
     # Zip deflater level: 1(BEST_SPEED) / 6(DEFAULT) / 9(BEST)
     zip-level: 1
-    executor:
+    executor-properties:
       pool-size: 4
       queue-capacity: 64

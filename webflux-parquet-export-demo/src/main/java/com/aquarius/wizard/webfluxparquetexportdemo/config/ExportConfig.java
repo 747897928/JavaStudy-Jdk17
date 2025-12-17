@@ -23,7 +23,7 @@ public class ExportConfig {
      */
     @Bean(destroyMethod = "shutdown")
     public ExecutorService exportExecutor(ExportProperties props) {
-        ExportProperties.ExecutorProperties cfg = props.getExecutor();
+        ExportProperties.ExecutorProperties cfg = props.getExecutorProperties();
         int poolSize = Math.max(1, cfg.getPoolSize());
         int queueCapacity = Math.max(1, cfg.getQueueCapacity());
 

@@ -72,7 +72,7 @@ public class ExportProperties {
     private int zipLevel = Deflater.BEST_SPEED;
 
     @Getter
-    private final ExecutorProperties executor = new ExecutorProperties();
+    private final ExecutorProperties executorProperties = new ExecutorProperties();
 
     /**
      * Thread-pool settings for the bounded export executor.
