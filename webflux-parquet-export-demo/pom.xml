@@ -34,6 +34,13 @@
             <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- Swagger/OpenAPI UI for Spring WebFlux -->
         <dependency>
             <groupId>org.springdoc</groupId>

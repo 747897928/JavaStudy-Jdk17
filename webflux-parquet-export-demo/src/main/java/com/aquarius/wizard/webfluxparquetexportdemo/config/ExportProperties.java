@@ -1,11 +1,15 @@
 package com.aquarius.wizard.webfluxparquetexportdemo.config;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.concurrent.TimeUnit;
 import java.util.zip.Deflater;
 
 @ConfigurationProperties(prefix = "demo.export")
+@Getter
+@Setter
 public class ExportProperties {
 
     /**
@@ -67,81 +71,16 @@ public class ExportProperties {
      */
     private int zipLevel = Deflater.BEST_SPEED;
 
+    @Getter
     private final ExecutorProperties executor = new ExecutorProperties();
-
-    public int getChunkSize() {
-        return chunkSize;
-    }
-
-    public void setChunkSize(int chunkSize) {
-        this.chunkSize = chunkSize;
-    }
-
-    public int getOutputBufferSize() {
-        return outputBufferSize;
-    }
-
-    public void setOutputBufferSize(int outputBufferSize) {
-        this.outputBufferSize = outputBufferSize;
-    }
-
-    public long getMaxRows() {
-        return maxRows;
-    }
-
-    public void setMaxRows(long maxRows) {
-        this.maxRows = maxRows;
-    }
-
-    public boolean isCsvFlushHeader() {
-        return csvFlushHeader;
-    }
-
-    public void setCsvFlushHeader(boolean csvFlushHeader) {
-        this.csvFlushHeader = csvFlushHeader;
-    }
-
-    public long getCsvFlushEveryBytes() {
-        return csvFlushEveryBytes;
-    }
-
-    public void setCsvFlushEveryBytes(long csvFlushEveryBytes) {
-        this.csvFlushEveryBytes = csvFlushEveryBytes;
-    }
-
-    public boolean isZipFlushHeader() {
-        return zipFlushHeader;
-    }
-
-    public void setZipFlushHeader(boolean zipFlushHeader) {
-        this.zipFlushHeader = zipFlushHeader;
-    }
-
-    public long getZipFlushEveryBytes() {
-        return zipFlushEveryBytes;
-    }
-
-    public void setZipFlushEveryBytes(long zipFlushEveryBytes) {
-        this.zipFlushEveryBytes = zipFlushEveryBytes;
-    }
-
-    public int getZipLevel() {
-        return zipLevel;
-    }
-
-    public void setZipLevel(int zipLevel) {
-        this.zipLevel = zipLevel;
-    }
-
-    public ExecutorProperties getExecutor() {
-        return executor;
-    }
 
     /**
      * Thread-pool settings for the bounded export executor.
      * <p>
      * Named {@code ExecutorProperties} to avoid confusion with {@link java.util.concurrent.Executor}.
      */
+    @Getter
+    @Setter
     public static class ExecutorProperties {
         /**
          * Fixed pool size for blocking export IO.
@@ -156,37 +95,5 @@ public class ExportProperties {
         private long keepAlive = 60L;
 
         private TimeUnit keepAliveUnit = TimeUnit.SECONDS;
-
-        public int getPoolSize() {
-            return poolSize;
-        }
-
-        public void setPoolSize(int poolSize) {
-            this.poolSize = poolSize;
-        }
-
-        public int getQueueCapacity() {
-            return queueCapacity;
-        }
-
-        public void setQueueCapacity(int queueCapacity) {
-            this.queueCapacity = queueCapacity;
-        }
-
-        public long getKeepAlive() {
-            return keepAlive;
-        }
-
-        public void setKeepAlive(long keepAlive) {
-            this.keepAlive = keepAlive;
-        }
-
-        public TimeUnit getKeepAliveUnit() {
-            return keepAliveUnit;
-        }
-
-        public void setKeepAliveUnit(TimeUnit keepAliveUnit) {
-            this.keepAliveUnit = keepAliveUnit;
-        }
     }
 }
