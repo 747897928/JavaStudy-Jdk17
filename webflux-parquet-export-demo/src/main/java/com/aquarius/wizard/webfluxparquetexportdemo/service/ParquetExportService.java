@@ -3,30 +3,24 @@ package com.aquarius.wizard.webfluxparquetexportdemo.service;
 import com.aquarius.wizard.webfluxparquetexportdemo.io.CountingOutputStream;
 import com.aquarius.wizard.webfluxparquetexportdemo.io.NonClosingOutputStream;
 import com.aquarius.wizard.webfluxparquetexportdemo.config.ExportProperties;
+import com.aquarius.wizard.webfluxparquetexportdemo.demo.DemoParquetGenerator;
 import com.aquarius.wizard.webfluxparquetexportdemo.model.FileFormat;
 import com.aquarius.wizard.webfluxparquetexportdemo.util.CsvUtil;
 import com.aquarius.wizard.webfluxparquetexportdemo.util.Int96Util;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;
-import org.apache.parquet.example.data.simple.SimpleGroupFactory;
 import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.ParquetReader;
-import org.apache.parquet.hadoop.ParquetWriter;
 import org.apache.parquet.hadoop.example.GroupReadSupport;
-import org.apache.parquet.hadoop.example.GroupWriteSupport;
-import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.LogicalTypeAnnotation;
 import org.apache.parquet.schema.MessageType;
-import org.apache.parquet.schema.MessageTypeParser;
 import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.apache.parquet.schema.Type;
 import org.reactivestreams.Publisher;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferFactory;
 import org.springframework.core.io.buffer.DataBufferUtils;
@@ -38,14 +32,12 @@ import reactor.core.scheduler.Scheduler;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Instant;
@@ -54,7 +46,6 @@ import java.time.LocalTime;
 import java.util.Random;
 import java.util.concurrent.Callable;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -81,8 +72,6 @@ import java.util.zip.ZipOutputStream;
 @Service
 public class ParquetExportService {
 
-    private static final Logger log = LoggerFactory.getLogger(ParquetExportService.class);
-
     /**
      * CSV encoding used by this demo.
      * <p>
@@ -91,27 +80,17 @@ public class ParquetExportService {
      */
     public static final Charset CSV_CHARSET = StandardCharsets.ISO_8859_1;
 
-    private static final String DEMO_SCHEMA = """
-            message demo {
-              optional int32   i32;
-              optional int64   i64;
-              optional int96   t96;
-              optional float   f32;
-              optional boolean b;
-              optional double  d64;
-              optional binary  bin;
-            }
-            """;
-
     private final ExportProperties props;
     private final ExecutorService exportExecutor;
     private final Scheduler exportScheduler;
+    private final DemoParquetGenerator demoParquetGenerator;
     private final AtomicReference<java.nio.file.Path> demoParquetPath = new AtomicReference<>();
 
     public ParquetExportService(ExportProperties props, ExecutorService exportExecutor, Scheduler exportScheduler) {
         this.props = props;
         this.exportExecutor = exportExecutor;
         this.exportScheduler = exportScheduler;
+        this.demoParquetGenerator = new DemoParquetGenerator();
     }
 
     public long size(java.nio.file.Path p) {
@@ -128,43 +107,6 @@ public class ParquetExportService {
             throw new IllegalStateException("Demo parquet not found. Call POST /demo/generate first.");
         }
         return p;
-    }
-
-    public record TemporaryParquet(java.nio.file.Path localParquetPath, String baseName) {
-    }
-
-    /**
-     * Simulate: user provides a Parquet download URL (s3a:// or gs://), we obtain an InputStream,
-     * then write that InputStream to a local temp parquet file for {@link ParquetReader} to read.
-     * <p>
-     * In this demo project we don't actually call S3/GCS. Instead, we generate a parquet file with random size and name,
-     * open it as an InputStream, and copy it to another "local" temp parquet file (to exercise the same code path).
-     */
-    public Mono<TemporaryParquet> prepareTemporaryParquet(String sourceUrl, Long rows) {
-        return runOnExportScheduler(() -> prepareTemporaryParquetBlocking(sourceUrl, rows));
-    }
-
-    public Mono<Void> deleteTemporaryParquet(java.nio.file.Path parquetPath) {
-        return Mono.fromRunnable(() -> deleteTemporaryParquetBlocking(parquetPath))
-                // Cleanup should not depend on executor availability; if we can't schedule, just run inline.
-                .subscribeOn(exportScheduler)
-                .onErrorResume(RejectedExecutionException.class, ex -> {
-                    deleteTemporaryParquetBlocking(parquetPath);
-                    return Mono.empty();
-                })
-                .then();
-    }
-
-    private void deleteTemporaryParquetBlocking(java.nio.file.Path parquetPath) {
-        if (parquetPath == null) {
-            return;
-        }
-        try {
-            Files.deleteIfExists(parquetPath);
-        } catch (IOException e) {
-            // Best effort cleanup. The temp file may already be deleted or locked by OS/AV.
-            log.debug("Failed to delete temporary parquet: {}", parquetPath, e);
-        }
     }
 
     /**
@@ -199,153 +141,9 @@ public class ParquetExportService {
         Files.createDirectories(dir);
 
         java.nio.file.Path out = dir.resolve("demo.parquet");
-        generateParquetFile(out, rows, new Random(1234567L));
+        demoParquetGenerator.generateParquetFile(out, rows, new Random(1234567L));
         demoParquetPath.set(out);
         return out;
-    }
-
-    private TemporaryParquet prepareTemporaryParquetBlocking(String sourceUrl, Long rows) throws IOException {
-        java.nio.file.Path tmpDir = Paths.get(System.getProperty("user.dir"), "data", "tmp");
-        Files.createDirectories(tmpDir);
-
-        ThreadLocalRandom random = ThreadLocalRandom.current();
-        String sourceBaseName = sanitizeBaseNameFromUrl(sourceUrl);
-        String randomSuffix = randomSafeName(8);
-        String baseName = sourceBaseName.isEmpty() ? randomSafeName(12) : sourceBaseName + "_" + randomSuffix;
-
-        long rowsToGenerate = (rows != null && rows > 0) ? rows : pickRandomRows();
-
-        // "Remote" parquet file (simulated).
-        java.nio.file.Path remoteParquet = tmpDir.resolve(baseName + "_remote.parquet");
-        // "Local" parquet file (what our export pipeline will read).
-        java.nio.file.Path localParquet = tmpDir.resolve(baseName + ".parquet");
-
-        // 1) Simulate remote object: generate parquet to remoteParquet.
-        generateParquetFile(remoteParquet, rowsToGenerate, new Random(random.nextLong()));
-
-        // 2) Simulate: download stream -> local file.
-        try (InputStream inputStream = Files.newInputStream(remoteParquet)) {
-            Files.copy(inputStream, localParquet, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            Files.deleteIfExists(localParquet);
-            throw e;
-        } finally {
-            Files.deleteIfExists(remoteParquet);
-        }
-
-        return new TemporaryParquet(localParquet, baseName);
-    }
-
-    private void generateParquetFile(java.nio.file.Path out, long rows, Random randomGenerator) throws IOException {
-
-        MessageType schema = MessageTypeParser.parseMessageType(DEMO_SCHEMA);
-        Configuration conf = new Configuration();
-        GroupWriteSupport.setSchema(schema, conf);
-
-        SimpleGroupFactory factory = new SimpleGroupFactory(schema);
-
-        try (ParquetWriter<Group> writer =
-                     new ParquetWriter<>(
-                             new Path(out.toUri()),
-                             new GroupWriteSupport(),
-                             CompressionCodecName.SNAPPY,
-                             ParquetWriter.DEFAULT_BLOCK_SIZE,
-                             ParquetWriter.DEFAULT_PAGE_SIZE,
-                             ParquetWriter.DEFAULT_PAGE_SIZE,
-                             ParquetWriter.DEFAULT_IS_DICTIONARY_ENABLED,
-                             ParquetWriter.DEFAULT_IS_VALIDATING_ENABLED,
-                             org.apache.parquet.column.ParquetProperties.WriterVersion.PARQUET_1_0,
-                             conf
-                     )) {
-
-            for (long rowIndex = 0; rowIndex < rows; rowIndex++) {
-                Group rowGroup = factory.newGroup();
-
-                // Make some columns null randomly (optional fields), to test: null -> empty
-                if (randomGenerator.nextInt(10) != 0) rowGroup.add("i32", randomGenerator.nextInt());
-                if (randomGenerator.nextInt(10) != 0) rowGroup.add("i64", randomGenerator.nextLong());
-                if (randomGenerator.nextInt(10) != 0) {
-                    Instant now = Instant.ofEpochMilli(System.currentTimeMillis() + randomGenerator.nextInt(1_000_000));
-                    rowGroup.add("t96", Binary.fromConstantByteArray(Int96Util.instantToInt96(now)));
-                }
-                if (randomGenerator.nextInt(10) != 0) rowGroup.add("f32", randomGenerator.nextFloat());
-                if (randomGenerator.nextInt(10) != 0) rowGroup.add("b", randomGenerator.nextBoolean());
-                if (randomGenerator.nextInt(10) != 0) rowGroup.add("d64", randomGenerator.nextDouble());
-
-                if (randomGenerator.nextInt(10) != 0) {
-                    // ASCII bytes are easier to eyeball in CSV, but export logic supports arbitrary bytes.
-                    byte[] randomAsciiBytes = new byte[16];
-                    for (int byteIndex = 0; byteIndex < randomAsciiBytes.length; byteIndex++) {
-                        int ch = 33 + randomGenerator.nextInt(94); // '!'..'~'
-                        randomAsciiBytes[byteIndex] = (byte) ch;
-                    }
-                    rowGroup.add("bin", Binary.fromConstantByteArray(randomAsciiBytes));
-                }
-
-                writer.write(rowGroup);
-            }
-        }
-    }
-
-    private long pickRandomRows() {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
-        // Weighted distribution to cover small/medium/large files in a dev-friendly way.
-        int bucket = random.nextInt(100);
-        if (bucket < 40) {
-            return random.nextLong(200, 10_000);           // tiny/small
-        }
-        if (bucket < 85) {
-            return random.nextLong(50_000, 400_000);       // medium
-        }
-        return random.nextLong(700_000, 2_000_000);        // large
-    }
-
-    private static String sanitizeBaseNameFromUrl(String sourceUrl) {
-        if (sourceUrl == null || sourceUrl.isBlank()) {
-            return "";
-        }
-        String trimmed = sourceUrl.trim();
-        int slash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf(':'));
-        String lastPart = (slash >= 0) ? trimmed.substring(slash + 1) : trimmed;
-        if (lastPart.endsWith(".parquet")) {
-            lastPart = lastPart.substring(0, lastPart.length() - ".parquet".length());
-        }
-        // Keep only [A-Za-z0-9_], replace others with underscore, and collapse multiple underscores.
-        StringBuilder sb = new StringBuilder(lastPart.length());
-        char prev = 0;
-        for (int i = 0; i < lastPart.length(); i++) {
-            char c = lastPart.charAt(i);
-            char normalized = isAllowedNameChar(c) ? c : '_';
-            if (normalized == '_' && prev == '_') {
-                continue;
-            }
-            sb.append(normalized);
-            prev = normalized;
-        }
-        String sanitized = sb.toString();
-        // Trim underscores.
-        int start = 0;
-        int end = sanitized.length();
-        while (start < end && sanitized.charAt(start) == '_') start++;
-        while (end > start && sanitized.charAt(end - 1) == '_') end--;
-        return sanitized.substring(start, end);
-    }
-
-    private String randomSafeName(int length) {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
-        final char[] alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_".toCharArray();
-        StringBuilder sb = new StringBuilder(length);
-        for (int i = 0; i < length; i++) {
-            sb.append(alphabet[random.nextInt(alphabet.length)]);
-        }
-        return sb.toString();
-    }
-
-    private static boolean isAllowedNameChar(char c) {
-        return (c >= 'a' && c <= 'z')
-                || (c >= 'A' && c <= 'Z')
-                || (c >= '0' && c <= '9')
-                || c == '_';
     }
 
     /**

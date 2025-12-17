@@ -2,6 +2,7 @@ package com.aquarius.wizard.webfluxparquetexportdemo.controller;
 
 import com.aquarius.wizard.webfluxparquetexportdemo.model.FileFormat;
 import com.aquarius.wizard.webfluxparquetexportdemo.service.ParquetExportService;
+import com.aquarius.wizard.webfluxparquetexportdemo.service.ParquetStagingService;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -23,10 +24,12 @@ import java.util.function.Function;
 @RequestMapping("/demo")
 public class DemoController {
 
-    private final ParquetExportService service;
+    private final ParquetExportService exportService;
+    private final ParquetStagingService stagingService;
 
-    public DemoController(ParquetExportService service) {
-        this.service = service;
+    public DemoController(ParquetExportService exportService, ParquetStagingService stagingService) {
+        this.exportService = exportService;
+        this.stagingService = stagingService;
     }
 
     /**
@@ -37,12 +40,12 @@ public class DemoController {
      */
     @PostMapping("/generate")
     public Mono<Map<String, Object>> generate(@RequestParam(defaultValue = "500000") long rows) {
-        return service.generateDemoParquet(rows)
+        return exportService.generateDemoParquet(rows)
                 .map(path -> {
                     Map<String, Object> resp = new LinkedHashMap<>();
                     resp.put("parquetPath", path.toAbsolutePath().toString());
                     resp.put("rows", rows);
-                    resp.put("sizeBytes", service.size(path));
+                    resp.put("sizeBytes", exportService.size(path));
                     return resp;
                 });
     }
@@ -70,14 +73,16 @@ public class DemoController {
                                @RequestParam(required = false) String source,
                                @RequestParam(required = false) Long rows,
                                ServerHttpResponse response) {
-        Function<ParquetExportService.TemporaryParquet, Mono<Void>> cleanup =
-                temp -> service.deleteTemporaryParquet(temp.localParquetPath());
+        // Fail fast if the bounded executor is overloaded, before we start staging/export work.
+        exportService.assertExportCapacityOrThrow();
+
+        Function<File, Mono<Void>> cleanup = stagingService::deleteStagedParquet;
 
         return Mono.usingWhen(
-                service.prepareTemporaryParquet(source, rows),
-                temp -> writeDownloadResponse(temp.localParquetPath().toFile(), format, response),
+                stagingService.stageParquetFromSource(source, rows),
+                parquetFile -> writeDownloadResponse(parquetFile, format, response),
                 cleanup,
-                (temp, error) -> cleanup.apply(temp),
+                (parquetFile, error) -> cleanup.apply(parquetFile),
                 cleanup
         );
     }
@@ -85,9 +90,6 @@ public class DemoController {
     private Mono<Void> writeDownloadResponse(File parquetFile,
                                              FileFormat format,
                                              ServerHttpResponse response) {
-        // Fail fast if the bounded export executor is overloaded, before we start the streaming response.
-        service.assertExportCapacityOrThrow();
-
         applyStandardDownloadHeaders(response);
 
         DownloadSpec spec = DownloadSpec.from(format, parquetFile);
@@ -95,7 +97,7 @@ public class DemoController {
         response.getHeaders().set(HttpHeaders.CONTENT_DISPOSITION,
                 "attachment; filename=\"" + spec.filename() + "\"");
 
-        Publisher<DataBuffer> body = service.export(parquetFile.toPath(), format, response.bufferFactory(), spec.baseName());
+        Publisher<DataBuffer> body = exportService.export(parquetFile.toPath(), format, response.bufferFactory(), spec.baseName());
         return response.writeWith(body);
     }
 

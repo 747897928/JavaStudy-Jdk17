@@ -212,7 +212,12 @@ CSV 是文本格式；但你们的需求是不做 Base64，而要尽量“原始
 实现方式：
 
 - `DemoController` 使用 `Mono.usingWhen(...)` 包住一次请求的临时文件资源
-- 在 `onComplete/onError/onCancel` 都调用 `deleteTemporaryParquet(...)` 做 best-effort 删除
+- 在 `onComplete/onError/onCancel` 都调用 `ParquetStagingService.deleteStagedParquet(...)` 做 best-effort 删除（会删除该请求的临时目录）
+
+补充（文件名与下载名一致性）：
+
+- 如果用户传入 `source=s3a://.../abc123.parquet`，本示例会将本地临时文件命名为 `abc123.parquet`
+- 因此导出响应文件名会自然符合：`abc123.parquet` / `abc123.csv` / `abc123.zip`（ZIP 内 entry 为 `abc123.csv`）
 
 ## 7. 线程模型：不要堵 Netty event-loop
 
