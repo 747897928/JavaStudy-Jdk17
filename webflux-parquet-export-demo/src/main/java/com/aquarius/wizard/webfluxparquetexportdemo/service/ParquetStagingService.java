@@ -1,6 +1,7 @@
 package com.aquarius.wizard.webfluxparquetexportdemo.service;
 
 import com.aquarius.wizard.webfluxparquetexportdemo.demo.DemoParquetGenerator;
+import com.aquarius.wizard.webfluxparquetexportdemo.util.RandomNameGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -80,17 +81,17 @@ public class ParquetStagingService {
         Path tmpRoot = Path.of(System.getProperty("user.dir"), "data", "tmp");
         Files.createDirectories(tmpRoot);
 
-        String baseName = sanitizeBaseNameFromUrl(sourceUrl);
-        if (baseName.isBlank()) {
-            baseName = randomSafeName(12);
-        }
+        // In this demo we always use a random base name so that the download name is stable and predictable:
+        // abc123.parquet -> abc123.csv -> abc123.zip (zip contains abc123.csv).
+        // Only letters and digits are used to keep filenames header/ZIP-friendly.
+        String baseName = RandomNameGenerator.randomAlphaNumeric(12);
 
         long rowsToGenerate = (rows != null && rows > 0) ? rows : pickRandomRows();
 
         // Use a per-request directory so we can safely keep the local parquet name stable (e.g. abc123.parquet)
         // without worrying about collisions between concurrent requests.
-        Path requestDir = Files.createTempDirectory(tmpRoot, baseName + "_");
-        Path remoteParquet = requestDir.resolve(baseName + "_remote.parquet");
+        Path requestDir = Files.createTempDirectory(tmpRoot, baseName + "tmp");
+        Path remoteParquet = requestDir.resolve(baseName + "Remote.parquet");
         Path localParquet = requestDir.resolve(baseName + ".parquet");
 
         try {
@@ -169,54 +170,6 @@ public class ParquetStagingService {
         return random.nextLong(700_000, 2_000_000);        // large
     }
 
-    private static String sanitizeBaseNameFromUrl(String sourceUrl) {
-        if (sourceUrl == null || sourceUrl.isBlank()) {
-            return "";
-        }
-        String trimmed = sourceUrl.trim();
-        int slash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf(':'));
-        String lastPart = (slash >= 0) ? trimmed.substring(slash + 1) : trimmed;
-        if (lastPart.endsWith(".parquet")) {
-            lastPart = lastPart.substring(0, lastPart.length() - ".parquet".length());
-        }
-        // Keep only [A-Za-z0-9_], replace others with underscore, and collapse multiple underscores.
-        StringBuilder sb = new StringBuilder(lastPart.length());
-        char prev = 0;
-        for (int i = 0; i < lastPart.length(); i++) {
-            char c = lastPart.charAt(i);
-            char normalized = isAllowedNameChar(c) ? c : '_';
-            if (normalized == '_' && prev == '_') {
-                continue;
-            }
-            sb.append(normalized);
-            prev = normalized;
-        }
-        String sanitized = sb.toString();
-        // Trim underscores.
-        int start = 0;
-        int end = sanitized.length();
-        while (start < end && sanitized.charAt(start) == '_') start++;
-        while (end > start && sanitized.charAt(end - 1) == '_') end--;
-        return sanitized.substring(start, end);
-    }
-
-    private static String randomSafeName(int length) {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
-        final char[] alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_".toCharArray();
-        StringBuilder sb = new StringBuilder(length);
-        for (int i = 0; i < length; i++) {
-            sb.append(alphabet[random.nextInt(alphabet.length)]);
-        }
-        return sb.toString();
-    }
-
-    private static boolean isAllowedNameChar(char c) {
-        return (c >= 'a' && c <= 'z')
-                || (c >= 'A' && c <= 'Z')
-                || (c >= '0' && c <= '9')
-                || c == '_';
-    }
-
     private <T> Mono<T> runOnExportScheduler(Callable<T> task) {
         return Mono.fromCallable(task)
                 .subscribeOn(exportScheduler)
@@ -226,4 +179,3 @@ public class ParquetStagingService {
                 .onErrorMap(IOException.class, UncheckedIOException::new);
     }
 }
-

@@ -216,8 +216,8 @@ CSV 是文本格式；但你们的需求是不做 Base64，而要尽量“原始
 
 补充（文件名与下载名一致性）：
 
-- 如果用户传入 `source=s3a://.../abc123.parquet`，本示例会将本地临时文件命名为 `abc123.parquet`
-- 因此导出响应文件名会自然符合：`abc123.parquet` / `abc123.csv` / `abc123.zip`（ZIP 内 entry 为 `abc123.csv`）
+- 本示例的“模拟下载”会使用随机字母/数字作为 baseName（例如 `AbC123xYz890`），并将本地临时文件命名为 `AbC123xYz890.parquet`
+- 因此导出响应文件名会自然符合：`AbC123xYz890.parquet` / `AbC123xYz890.csv` / `AbC123xYz890.zip`（ZIP 内 entry 为 `AbC123xYz890.csv`）
 
 ## 7. 线程模型：不要堵 Netty event-loop
 
@@ -265,8 +265,9 @@ ParquetReader、ZipOutputStream 都是阻塞 IO/CPU 操作，因此必须在专�
 
 ## 10. 本项目当前实现位置索引
 
-- 生成 Parquet：`src/main/java/.../service/ParquetExportService.java` → `generateDemoParquet(...)`
-- 下载接口：`src/main/java/.../controller/DemoController.java`
+- 生成 Parquet（直接下载，不落地）：`src/main/java/.../service/DemoGenerateService.java` + `src/main/java/.../service/ParquetGenerateService.java`
+- 下载接口（模拟 S3/GCS → 本地临时 parquet → 导出）：`src/main/java/.../service/DemoDownloadService.java` + `src/main/java/.../service/ParquetStagingService.java`
+- Controller（尽量薄）：`src/main/java/.../controller/DemoController.java`
 - CSV 写入与转义：`src/main/java/.../util/CsvUtil.java`
 - INT96：`src/main/java/.../util/Int96Util.java`
 - flush/stream 工具：

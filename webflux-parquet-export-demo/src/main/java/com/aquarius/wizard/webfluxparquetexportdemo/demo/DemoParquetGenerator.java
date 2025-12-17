@@ -6,8 +6,10 @@ import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.example.data.simple.SimpleGroupFactory;
 import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.example.ExampleParquetWriter;
 import org.apache.parquet.hadoop.example.GroupWriteSupport;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
+import org.apache.parquet.io.OutputFile;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.MessageTypeParser;
@@ -21,7 +23,7 @@ import java.util.Random;
  * <p>
  * This is used in two places:
  * <ul>
- *   <li>{@code POST /demo/generate}: generate {@code ./data/demo.parquet}</li>
+ *   <li>{@code POST /demo/generate}: stream-generate a Parquet file to the client</li>
  *   <li>{@code GET /demo/download?source=...}: simulate remote parquet download by generating a "remote" parquet,
  *       then copying it via an {@code InputStream} to a local temp parquet</li>
  * </ul>
@@ -41,53 +43,64 @@ public class DemoParquetGenerator {
             """;
 
     public void generateParquetFile(java.nio.file.Path out, long rows, Random randomGenerator) throws IOException {
+        generateParquetFile(new Path(out.toUri()), rows, randomGenerator);
+    }
+
+    public void generateParquetFile(Path out, long rows, Random randomGenerator) throws IOException {
         MessageType schema = MessageTypeParser.parseMessageType(DEMO_SCHEMA);
         Configuration conf = new Configuration();
         GroupWriteSupport.setSchema(schema, conf);
 
+        try (ParquetWriter<Group> writer = ExampleParquetWriter.builder(out)
+                .withType(schema)
+                .withConf(conf)
+                .withCompressionCodec(CompressionCodecName.SNAPPY)
+                .build()) {
+            writeRows(schema, rows, randomGenerator, writer);
+        }
+    }
+
+    public void generateParquetFile(OutputFile out, long rows, Random randomGenerator) throws IOException {
+        MessageType schema = MessageTypeParser.parseMessageType(DEMO_SCHEMA);
+        Configuration conf = new Configuration();
+        GroupWriteSupport.setSchema(schema, conf);
+
+        try (ParquetWriter<Group> writer = ExampleParquetWriter.builder(out)
+                .withType(schema)
+                .withConf(conf)
+                .withCompressionCodec(CompressionCodecName.SNAPPY)
+                .build()) {
+            writeRows(schema, rows, randomGenerator, writer);
+        }
+    }
+
+    private void writeRows(MessageType schema, long rows, Random randomGenerator, ParquetWriter<Group> writer) throws IOException {
         SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+        for (long rowIndex = 0; rowIndex < rows; rowIndex++) {
+            Group rowGroup = factory.newGroup();
 
-        try (ParquetWriter<Group> writer =
-                     new ParquetWriter<>(
-                             new Path(out.toUri()),
-                             new GroupWriteSupport(),
-                             CompressionCodecName.SNAPPY,
-                             ParquetWriter.DEFAULT_BLOCK_SIZE,
-                             ParquetWriter.DEFAULT_PAGE_SIZE,
-                             ParquetWriter.DEFAULT_PAGE_SIZE,
-                             ParquetWriter.DEFAULT_IS_DICTIONARY_ENABLED,
-                             ParquetWriter.DEFAULT_IS_VALIDATING_ENABLED,
-                             org.apache.parquet.column.ParquetProperties.WriterVersion.PARQUET_1_0,
-                             conf
-                     )) {
-
-            for (long rowIndex = 0; rowIndex < rows; rowIndex++) {
-                Group rowGroup = factory.newGroup();
-
-                // Make some columns null randomly (optional fields), to test: null -> empty
-                if (randomGenerator.nextInt(10) != 0) rowGroup.add("i32", randomGenerator.nextInt());
-                if (randomGenerator.nextInt(10) != 0) rowGroup.add("i64", randomGenerator.nextLong());
-                if (randomGenerator.nextInt(10) != 0) {
-                    Instant now = Instant.ofEpochMilli(System.currentTimeMillis() + randomGenerator.nextInt(1_000_000));
-                    rowGroup.add("t96", Binary.fromConstantByteArray(Int96Util.instantToInt96(now)));
-                }
-                if (randomGenerator.nextInt(10) != 0) rowGroup.add("f32", randomGenerator.nextFloat());
-                if (randomGenerator.nextInt(10) != 0) rowGroup.add("b", randomGenerator.nextBoolean());
-                if (randomGenerator.nextInt(10) != 0) rowGroup.add("d64", randomGenerator.nextDouble());
-
-                if (randomGenerator.nextInt(10) != 0) {
-                    // ASCII bytes are easier to eyeball in CSV, but export logic supports arbitrary bytes.
-                    byte[] randomAsciiBytes = new byte[16];
-                    for (int byteIndex = 0; byteIndex < randomAsciiBytes.length; byteIndex++) {
-                        int ch = 33 + randomGenerator.nextInt(94); // '!'..'~'
-                        randomAsciiBytes[byteIndex] = (byte) ch;
-                    }
-                    rowGroup.add("bin", Binary.fromConstantByteArray(randomAsciiBytes));
-                }
-
-                writer.write(rowGroup);
+            // Make some columns null randomly (optional fields), to test: null -> empty
+            if (randomGenerator.nextInt(10) != 0) rowGroup.add("i32", randomGenerator.nextInt());
+            if (randomGenerator.nextInt(10) != 0) rowGroup.add("i64", randomGenerator.nextLong());
+            if (randomGenerator.nextInt(10) != 0) {
+                Instant now = Instant.ofEpochMilli(System.currentTimeMillis() + randomGenerator.nextInt(1_000_000));
+                rowGroup.add("t96", Binary.fromConstantByteArray(Int96Util.instantToInt96(now)));
             }
+            if (randomGenerator.nextInt(10) != 0) rowGroup.add("f32", randomGenerator.nextFloat());
+            if (randomGenerator.nextInt(10) != 0) rowGroup.add("b", randomGenerator.nextBoolean());
+            if (randomGenerator.nextInt(10) != 0) rowGroup.add("d64", randomGenerator.nextDouble());
+
+            if (randomGenerator.nextInt(10) != 0) {
+                // ASCII bytes are easier to eyeball in CSV, but export logic supports arbitrary bytes.
+                byte[] randomAsciiBytes = new byte[16];
+                for (int byteIndex = 0; byteIndex < randomAsciiBytes.length; byteIndex++) {
+                    int ch = 33 + randomGenerator.nextInt(94); // '!'..'~'
+                    randomAsciiBytes[byteIndex] = (byte) ch;
+                }
+                rowGroup.add("bin", Binary.fromConstantByteArray(randomAsciiBytes));
+            }
+
+            writer.write(rowGroup);
         }
     }
 }
-

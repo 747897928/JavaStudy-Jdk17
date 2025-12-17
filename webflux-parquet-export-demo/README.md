@@ -2,7 +2,7 @@
 
 一个可直接运行的最小示例（JDK 17 + Spring Boot 3.5.6 + WebFlux + Parquet 1.16.0 + Hadoop 3.4.1），演示：
 
-- 生成本地 Parquet（含多种 primitive 类型）
+- 生成 Parquet 并直接下载（不落地到本地文件）
 - Parquet → CSV：读一行写一行（不落地 CSV，不攒内存）
 - Parquet → ZIP(CSV)：边生成 CSV 边压缩写出（不落地 CSV/ZIP，不攒内存）
 
@@ -26,13 +26,13 @@ mvn -pl webflux-parquet-export-demo spring-boot:run
 - 该模块为了避免父工程里“锁死的旧依赖版本（如 Jackson 2.11、SLF4J 1.7）”与 Spring Boot 3.5.6 冲突，模块自身使用 `spring-boot-starter-parent:3.5.6` 作为 parent。
 - 你本机 Maven 版本较旧（3.3.9），模块在 `pom.xml` 里显式锁定了 `maven-compiler-plugin` 等插件版本以保证可以构建运行。
 
-## 2. 生成 demo.parquet
+## 2. 生成 Parquet（直接下载）
 
 ```bash
-curl -X POST "http://localhost:8080/demo/generate?rows=800000"
+curl -L -OJ -X POST "http://localhost:8080/demo/generate?rows=800000"
 ```
 
-会在当前运行目录下生成：`./data/demo.parquet`（即 `System.getProperty("user.dir") + "/data/demo.parquet"`）。
+该接口会直接返回一个 Parquet 下载响应（文件名为随机字母/数字，例如 `AbC123xYz890.parquet`），不在本地落地生成的 Parquet 文件。
 
 Schema 包含以下 primitive（全部 optional，会随机缺失用于测试 `null -> empty`）：
 
@@ -44,26 +44,26 @@ Schema 包含以下 primitive（全部 optional，会随机缺失用于测试 `n
 
 ## 3. 下载导出
 
-### 3.1 parquet 原样下载
+### 3.1 parquet 原样下载（模拟从 S3/GCS 落地到临时文件）
 
 ```bash
-curl -L -o data.parquet "http://localhost:8080/demo/download?format=parquet"
+curl -L -OJ "http://localhost:8080/demo/download?format=parquet&source=s3a://bucket/path/file.parquet"
 ```
 
 ### 3.2 流式 CSV 下载（不落地、不攒内存）
 
 ```bash
-curl -L -OJ "http://localhost:8080/demo/download?format=csv"
+curl -L -OJ "http://localhost:8080/demo/download?format=csv&source=gs://bucket/path/file.parquet"
 ```
 
 ### 3.3 流式 ZIP(CSV) 下载（不落地、不攒内存）
 
 ```bash
-curl -L -OJ "http://localhost:8080/demo/download?format=zip"
-# 文件名来自响应头 Content-Disposition（示例：abc_123.zip）
-unzip -l abc_123.zip
-# ZIP 里只有一个 CSV entry，名称与 parquet 原文件 baseName 一致（示例：abc_123.csv）
-unzip -p abc_123.zip abc_123.csv | head
+curl -L -OJ "http://localhost:8080/demo/download?format=zip&source=s3a://bucket/path/file.parquet"
+# 文件名来自响应头 Content-Disposition（示例：AbC123xYz890.zip）
+unzip -l AbC123xYz890.zip
+# ZIP 里只有一个 CSV entry，名称与 parquet 原文件 baseName 一致（示例：AbC123xYz890.csv）
+unzip -p AbC123xYz890.zip AbC123xYz890.csv | head
 ```
 
 ZIP 内只有一个 entry：`<baseName>.csv`（baseName 来自 parquet 原文件名去掉 `.parquet`）。
