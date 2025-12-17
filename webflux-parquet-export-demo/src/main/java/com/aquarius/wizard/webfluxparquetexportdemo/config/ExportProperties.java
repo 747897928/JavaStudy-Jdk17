@@ -67,7 +67,7 @@ public class ExportProperties {
      */
     private int zipLevel = Deflater.BEST_SPEED;
 
-    private final Executor executor = new Executor();
+    private final ExecutorProperties executor = new ExecutorProperties();
 
     public int getChunkSize() {
         return chunkSize;
@@ -133,11 +133,16 @@ public class ExportProperties {
         this.zipLevel = zipLevel;
     }
 
-    public Executor getExecutor() {
+    public ExecutorProperties getExecutor() {
         return executor;
     }
 
-    public static class Executor {
+    /**
+     * Thread-pool settings for the bounded export executor.
+     * <p>
+     * Named {@code ExecutorProperties} to avoid confusion with {@link java.util.concurrent.Executor}.
+     */
+    public static class ExecutorProperties {
         /**
          * Fixed pool size for blocking export IO.
          */

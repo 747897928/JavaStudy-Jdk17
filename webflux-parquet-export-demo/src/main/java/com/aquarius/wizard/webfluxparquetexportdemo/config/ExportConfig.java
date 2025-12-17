@@ -6,7 +6,11 @@ import org.springframework.context.annotation.Configuration;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
-import java.util.concurrent.*;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 
 @Configuration
 @EnableConfigurationProperties(ExportProperties.class)
@@ -19,7 +23,7 @@ public class ExportConfig {
      */
     @Bean(destroyMethod = "shutdown")
     public ExecutorService exportExecutor(ExportProperties props) {
-        ExportProperties.Executor cfg = props.getExecutor();
+        ExportProperties.ExecutorProperties cfg = props.getExecutor();
         int poolSize = Math.max(1, cfg.getPoolSize());
         int queueCapacity = Math.max(1, cfg.getQueueCapacity());
 
