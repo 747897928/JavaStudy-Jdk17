@@ -45,7 +45,7 @@ public class DemoController {
                     Map<String, Object> resp = new LinkedHashMap<>();
                     resp.put("parquetPath", path.toAbsolutePath().toString());
                     resp.put("rows", rows);
-                    resp.put("sizeBytes", exportService.size(path));
+                    resp.put("sizeBytes", exportService.fileSizeBytes(path));
                     return resp;
                 });
     }
@@ -97,7 +97,7 @@ public class DemoController {
         response.getHeaders().set(HttpHeaders.CONTENT_DISPOSITION,
                 "attachment; filename=\"" + spec.filename() + "\"");
 
-        Publisher<DataBuffer> body = exportService.export(parquetFile.toPath(), format, response.bufferFactory(), spec.baseName());
+        Publisher<DataBuffer> body = exportService.streamExport(parquetFile.toPath(), format, response.bufferFactory(), spec.baseName());
         return response.writeWith(body);
     }
 

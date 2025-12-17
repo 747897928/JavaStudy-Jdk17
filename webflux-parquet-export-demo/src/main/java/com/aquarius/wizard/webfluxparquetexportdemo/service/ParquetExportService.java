@@ -5,8 +5,8 @@ import com.aquarius.wizard.webfluxparquetexportdemo.io.NonClosingOutputStream;
 import com.aquarius.wizard.webfluxparquetexportdemo.config.ExportProperties;
 import com.aquarius.wizard.webfluxparquetexportdemo.demo.DemoParquetGenerator;
 import com.aquarius.wizard.webfluxparquetexportdemo.model.FileFormat;
+import com.aquarius.wizard.webfluxparquetexportdemo.parquet.ParquetToCsvCellValueConverter;
 import com.aquarius.wizard.webfluxparquetexportdemo.util.CsvUtil;
-import com.aquarius.wizard.webfluxparquetexportdemo.util.Int96Util;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;
@@ -14,12 +14,7 @@ import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.example.GroupReadSupport;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
-import org.apache.parquet.io.api.Binary;
-import org.apache.parquet.schema.LogicalTypeAnnotation;
 import org.apache.parquet.schema.MessageType;
-import org.apache.parquet.schema.PrimitiveType;
-import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
-import org.apache.parquet.schema.Type;
 import org.reactivestreams.Publisher;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferFactory;
@@ -34,15 +29,10 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
-import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalTime;
 import java.util.Random;
 import java.util.concurrent.Callable;
 import java.util.concurrent.RejectedExecutionException;
@@ -93,7 +83,7 @@ public class ParquetExportService {
         this.demoParquetGenerator = new DemoParquetGenerator();
     }
 
-    public long size(java.nio.file.Path p) {
+    public long fileSizeBytes(java.nio.file.Path p) {
         try {
             return Files.size(p);
         } catch (IOException e) {
@@ -149,48 +139,48 @@ public class ParquetExportService {
     /**
      * Export as PARQUET/CSV/ZIP(CSV) using streaming.
      */
-    public Publisher<DataBuffer> export(java.nio.file.Path parquetFile, FileFormat format, DataBufferFactory bufferFactory) {
-        return export(parquetFile, format, bufferFactory, "data");
+    public Publisher<DataBuffer> streamExport(java.nio.file.Path parquetFile, FileFormat format, DataBufferFactory bufferFactory) {
+        return streamExport(parquetFile, format, bufferFactory, "data");
     }
 
     /**
-     * Export with a preferred base name.
+     * Stream-export with a preferred base name.
      * <p>
      * For ZIP, this controls the CSV entry name inside the ZIP: {@code <baseName>.csv}.
      */
-    public Publisher<DataBuffer> export(java.nio.file.Path parquetFile,
-                                        FileFormat format,
-                                        DataBufferFactory bufferFactory,
-                                        String baseName) {
+    public Publisher<DataBuffer> streamExport(java.nio.file.Path parquetFile,
+                                              FileFormat format,
+                                              DataBufferFactory bufferFactory,
+                                              String baseName) {
         String safeBaseName = (baseName == null || baseName.isBlank()) ? "data" : baseName;
         String zipEntryName = sanitizeZipEntryName(safeBaseName + ".csv");
 
-        return exportFlux(parquetFile, format, bufferFactory, zipEntryName);
+        return createStreamingExportPublisher(parquetFile, format, bufferFactory, zipEntryName);
     }
 
-    private Publisher<DataBuffer> exportFlux(java.nio.file.Path parquetFile,
-                                             FileFormat format,
-                                             DataBufferFactory bufferFactory,
-                                             String zipEntryName) {
+    private Publisher<DataBuffer> createStreamingExportPublisher(java.nio.file.Path parquetFile,
+                                                                 FileFormat format,
+                                                                 DataBufferFactory bufferFactory,
+                                                                 String zipEntryName) {
         return switch (format) {
             case PARQUET -> DataBufferUtils.read(parquetFile, bufferFactory, props.getChunkSize());
             // CSV/ZIP are generated on-the-fly without creating a full file in memory.
             case CSV -> reactor.core.publisher.Flux
-                    .from(DataBufferUtils.outputStreamPublisher(
-                            os -> writeCsvTo(os, parquetFile),
+                .from(DataBufferUtils.outputStreamPublisher(
+                        os -> writeCsvTo(os, parquetFile),
                             bufferFactory,
                             exportExecutor,
                             props.getChunkSize()
                     ))
                     .onErrorMap(RejectedExecutionException.class, this::exportRejected);
             case ZIP -> reactor.core.publisher.Flux
-                    .from(DataBufferUtils.outputStreamPublisher(
-                            os -> writeZipCsvTo(os, parquetFile, zipEntryName),
-                            bufferFactory,
-                            exportExecutor,
-                            props.getChunkSize()
-                    ))
-                    .onErrorMap(RejectedExecutionException.class, this::exportRejected);
+                .from(DataBufferUtils.outputStreamPublisher(
+                        os -> writeZipCsvTo(os, parquetFile, zipEntryName),
+                        bufferFactory,
+                        exportExecutor,
+                        props.getChunkSize()
+                ))
+                .onErrorMap(RejectedExecutionException.class, this::exportRejected);
         };
     }
 
@@ -299,7 +289,7 @@ public class ParquetExportService {
                     }
 
                     try {
-                        CsvUtil.writeRow(countingOut, rowGroup, schema, CSV_CHARSET, this::getCsvCellValue);
+                        CsvUtil.writeRow(countingOut, rowGroup, schema, CSV_CHARSET, ParquetToCsvCellValueConverter::toCsvCellValue);
                         if (flushThresholdBytes > 0 && (countingOut.getCount() - lastFlushedAt) >= flushThresholdBytes) {
                             // Flush is for "latency/progress feel", not for memory safety.
                             // Memory safety mainly comes from streaming + backpressure + bounded buffers.
@@ -329,120 +319,6 @@ public class ParquetExportService {
         try (ParquetFileReader pfr = ParquetFileReader.open(HadoopInputFile.fromPath(hPath, conf))) {
             return pfr.getFileMetaData().getSchema();
         }
-    }
-
-    /**
-     * Converts one Parquet cell to something that can be written to CSV.
-     * <p>
-     * Returns:
-     * <ul>
-     *   <li>{@code null} - empty cell</li>
-     *   <li>{@code String/Number/...} - will be written as text</li>
-     *   <li>{@code byte[]} - will be written as raw bytes (still CSV-escaped)</li>
-     * </ul>
-     * <p>
-     * Note: Parquet has "physical types" (INT32/INT64/BINARY...) and optional "logical types"
-     * (DATE/TIME/TIMESTAMP/DECIMAL...). The same physical INT32 can mean "int" or "date", depending on the
-     * logical type annotation.
-     */
-    private Object getCsvCellValue(Group rowGroup, Type fieldType, int fieldIndex) {
-        if (rowGroup.getFieldRepetitionCount(fieldIndex) == 0) {
-            return null;
-        }
-
-        if (!fieldType.isPrimitive()) {
-            return rowGroup.getGroup(fieldIndex, 0).toString();
-        }
-
-        PrimitiveType primitiveType = fieldType.asPrimitiveType();
-        PrimitiveTypeName physicalType = primitiveType.getPrimitiveTypeName();
-        LogicalTypeAnnotation logicalType = primitiveType.getLogicalTypeAnnotation();
-
-        return switch (physicalType) {
-            case INT32 -> formatInt32(rowGroup.getInteger(fieldIndex, 0), logicalType);
-            case INT64 -> formatInt64(rowGroup.getLong(fieldIndex, 0), logicalType);
-            case FLOAT -> Float.toString(rowGroup.getFloat(fieldIndex, 0));
-            case DOUBLE -> Double.toString(rowGroup.getDouble(fieldIndex, 0));
-            case BOOLEAN -> Boolean.toString(rowGroup.getBoolean(fieldIndex, 0));
-
-            case INT96 -> {
-                // INT96 is historically used for timestamps (e.g. older Hive/Impala writers).
-                // It is not a standard logical type, but converting to Instant is the most common expectation.
-                Binary int96Binary = rowGroup.getInt96(fieldIndex, 0);
-                Instant instant = Int96Util.int96ToInstant(int96Binary.getBytes());
-                yield instant.toString();
-            }
-
-            case BINARY, FIXED_LEN_BYTE_ARRAY -> {
-                Binary binaryValue = rowGroup.getBinary(fieldIndex, 0);
-
-                // If annotated as DECIMAL, decode to a human-readable decimal string.
-                if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
-                    BigInteger unscaled = new BigInteger(binaryValue.getBytes());
-                    yield new BigDecimal(unscaled, decimal.getScale()).toPlainString();
-                }
-
-                // If annotated as STRING-like, decode UTF-8 for readability.
-                // We intentionally do NOT call String.intern(): for large exports it can cause memory pressure.
-                if (logicalType instanceof LogicalTypeAnnotation.StringLogicalTypeAnnotation
-                        || logicalType instanceof LogicalTypeAnnotation.EnumLogicalTypeAnnotation
-                        || logicalType instanceof LogicalTypeAnnotation.JsonLogicalTypeAnnotation) {
-                    yield binaryValue.toStringUsingUTF8();
-                }
-
-                // Otherwise keep raw bytes (works for arbitrary binary).
-                yield binaryValue.getBytes();
-            }
-
-            default -> rowGroup.getValueToString(fieldIndex, 0);
-        };
-    }
-
-    private Object formatInt32(int value, LogicalTypeAnnotation logicalType) {
-        if (logicalType instanceof LogicalTypeAnnotation.DateLogicalTypeAnnotation) {
-            return LocalDate.ofEpochDay(value).toString();
-        }
-        if (logicalType instanceof LogicalTypeAnnotation.TimeLogicalTypeAnnotation time) {
-            long nanos = switch (time.getUnit()) {
-                case MILLIS -> (long) value * 1_000_000L;
-                case MICROS -> (long) value * 1_000L;
-                case NANOS -> (long) value;
-            };
-            return LocalTime.ofNanoOfDay(nanos).toString();
-        }
-        if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
-            return BigDecimal.valueOf(value, decimal.getScale()).toPlainString();
-        }
-        return Integer.toString(value);
-    }
-
-    private Object formatInt64(long value, LogicalTypeAnnotation logicalType) {
-        if (logicalType instanceof LogicalTypeAnnotation.TimeLogicalTypeAnnotation time) {
-            long nanos = switch (time.getUnit()) {
-                case MILLIS -> value * 1_000_000L;
-                case MICROS -> value * 1_000L;
-                case NANOS -> value;
-            };
-            return LocalTime.ofNanoOfDay(nanos).toString();
-        }
-        if (logicalType instanceof LogicalTypeAnnotation.TimestampLogicalTypeAnnotation timestamp) {
-            Instant instant = switch (timestamp.getUnit()) {
-                case MILLIS -> Instant.ofEpochMilli(value);
-                case MICROS -> Instant.ofEpochSecond(
-                        Math.floorDiv(value, 1_000_000L),
-                        Math.floorMod(value, 1_000_000L) * 1_000L
-                );
-                case NANOS -> Instant.ofEpochSecond(
-                        Math.floorDiv(value, 1_000_000_000L),
-                        Math.floorMod(value, 1_000_000_000L)
-                );
-            };
-            return instant.toString();
-        }
-        if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
-            return BigDecimal.valueOf(value, decimal.getScale()).toPlainString();
-        }
-        return Long.toString(value);
     }
 
     private boolean isClientAbort(IOException e) {
