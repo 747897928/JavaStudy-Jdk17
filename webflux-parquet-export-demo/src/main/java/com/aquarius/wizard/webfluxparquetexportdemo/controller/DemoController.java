@@ -85,6 +85,9 @@ public class DemoController {
     private Mono<Void> writeDownloadResponse(File parquetFile,
                                              FileFormat format,
                                              ServerHttpResponse response) {
+        // Fail fast if the bounded export executor is overloaded, before we start the streaming response.
+        service.assertExportCapacityOrThrow();
+
         applyStandardDownloadHeaders(response);
 
         DownloadSpec spec = DownloadSpec.from(format, parquetFile);

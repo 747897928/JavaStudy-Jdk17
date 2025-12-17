@@ -440,7 +440,71 @@ ParquetReader、ZipOutputStream 都是阻塞 IO/CPU 操作，因此必须在专�
 >
 > ---
 >
-> ## 9. 你做 PoC/压测时建议重点观察的指标
+> ## 9. 资源释放/泄露自查清单（落地到本项目）
+>
+> 这部分是对当前实现的一次“资源/内存”审计结论，方便你后续迁移到真实业务（S3/GCS → 本地临时 parquet → 导出）时做 checklist。
+>
+> ### 9.1 Parquet/Hadoop 相关资源必须 close
+>
+> - 读 schema：`ParquetFileReader` 必须 close（本项目 `readSchema(...)` 已使用 try-with-resources）
+> - 读数据：`ParquetReader<Group>` 必须 close（本项目 `writeCsvTo(...)` 已使用 try-with-resources）
+>
+> 这两类如果忘记 close，最常见的后果是“文件句柄泄露”，表现为导出次数多了以后打不开新文件。
+>
+> ### 9.2 ZIP 相关资源必须 finish/close
+>
+> - 顺序：`putNextEntry(...)` → 持续写 entry 内容 → `closeEntry()` → `finish()`（本项目已按此实现）
+> - `finish()` 会写 ZIP 中央目录（没有它 ZIP 可能不完整不可解压）
+>
+> ### 9.3 为什么要 `NonClosingOutputStream`
+>
+> - `ZipOutputStream.close()` 默认会关闭底层流
+> - WebFlux 响应底层流由 Spring 管理，不希望业务代码提前 close
+> - 本项目用 `NonClosingOutputStream` 把 `close()` 变成 `flush()`：让 ZIP wrapper 能释放自身资源，但不会把 HTTP 响应流提前关掉
+>
+> ### 9.4 客户端取消/断开时是否会“继续读 parquet 做无用功”
+>
+> - 取消后写端通常会出现 `IOException`（broken pipe / connection reset 等）
+> - 本项目在 CSV/ZIP 写循环里捕获这类异常后会停止读取，从而尽快释放 ParquetReader/ZipOutputStream
+>
+> ### 9.5 如果混用其他 DataBuffer API，需要注意 DataBuffer release
+>
+> 本项目的导出链路是“从 OutputStream 产出 DataBuffer”，通常不需要手动 release。
+>
+> 但如果你在其他地方使用 `DataBufferUtils.write(...)`、手工拼 `DataBuffer` 并缓存/转发，需要特别注意：
+> - 某些 API 不会自动 release 上游 `DataBuffer`，需要显式 `DataBufferUtils.releaseConsumer()` 或者确保下游会释放
+>
+> ---
+>
+> ## 10. 线程池/调度的两个改进点（已落地）
+>
+> ### 10.1 复用 `Scheduler`，避免每次请求 new wrapper
+>
+> - 旧写法：每次调用 `Schedulers.fromExecutor(exportExecutor)` 都会创建一个新的 `Scheduler` 包装对象
+> - 新写法：在 Spring 容器里提供单例 `exportScheduler`，业务代码复用这个 Scheduler（避免重复创建/潜在 GC 压力）
+>
+> ### 10.2 Executor 饱和策略：拒绝 > CallerRuns
+>
+> - `CallerRunsPolicy` 的风险：线程池满时会在“提交任务的线程”执行阻塞导出逻辑；如果提交线程是 Netty event-loop，会直接把 WebFlux 服务器卡死
+> - 本项目改为 `AbortPolicy`：当线程池队列满时直接拒绝，让请求快速失败（一般返回 503），客户端可重试
+> - 同时提供了 `assertExportCapacityOrThrow()` 在开始 streaming 前尽量 fail-fast，减少“写到一半才失败”的概率
+>
+> ---
+>
+> ## 11. 对“外部审计建议”的核对结论（批判性记录）
+>
+> 下面是对某些常见建议的核对结论（大多数是对的，但需要理解边界）：
+>
+> - “`Flux.create` 默认 BUFFER 可能 OOM”：结论成立；它更像 push 模式，若生产速度 > 消费速度，会无界堆积信号/对象。
+> - “`outputStreamPublisher` 能把背压传导到阻塞写循环”：结论基本成立；下游慢时会让写端变慢（阻塞/等待），从而限制上游读取速度，内存更可控。
+>   - 边界：网络栈/框架仍可能有少量缓冲（例如 Netty/TCP），所以它不是“0 缓冲”，但关键是“不会无界增长”。
+> - “取消后 `write()` 抛 `IOException`，要立即停止读取”：结论成立；本项目按此处理（`isClientAbort(...)`）。
+> - “`DataBufferUtils.join/collectList` 会把内容攒内存”：结论成立；不适用于大文件导出。
+> - “`DataBufferUtils.write(...)` 可能需要手动 release”：这条是对的，但与本项目主链路无关（本项目从 OutputStream 产出 DataBuffer，通常不需要你手工 release）。
+>
+> ---
+>
+> ## 12. 你做 PoC/压测时建议重点观察的指标
 >
 > 1. **堆内存曲线**：导出过程中是否平稳（应接近平台化，而不是随时间增长）。
 > 2. **GC 次数/停顿**：Map 方案会明显更差；新方案应显著下降。

@@ -30,9 +30,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferFactory;
 import org.springframework.core.io.buffer.DataBufferUtils;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
+import reactor.core.scheduler.Scheduler;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -50,9 +52,12 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.Random;
+import java.util.concurrent.Callable;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -100,11 +105,13 @@ public class ParquetExportService {
 
     private final ExportProperties props;
     private final ExecutorService exportExecutor;
+    private final Scheduler exportScheduler;
     private final AtomicReference<java.nio.file.Path> demoParquetPath = new AtomicReference<>();
 
-    public ParquetExportService(ExportProperties props, ExecutorService exportExecutor) {
+    public ParquetExportService(ExportProperties props, ExecutorService exportExecutor, Scheduler exportScheduler) {
         this.props = props;
         this.exportExecutor = exportExecutor;
+        this.exportScheduler = exportScheduler;
     }
 
     public long size(java.nio.file.Path p) {
@@ -134,32 +141,57 @@ public class ParquetExportService {
      * open it as an InputStream, and copy it to another "local" temp parquet file (to exercise the same code path).
      */
     public Mono<TemporaryParquet> prepareTemporaryParquet(String sourceUrl, Long rows) {
-        return Mono.fromCallable(() -> prepareTemporaryParquetBlocking(sourceUrl, rows))
-                .subscribeOn(Schedulers.fromExecutor(exportExecutor));
+        return runOnExportScheduler(() -> prepareTemporaryParquetBlocking(sourceUrl, rows));
     }
 
     public Mono<Void> deleteTemporaryParquet(java.nio.file.Path parquetPath) {
-        return Mono.fromRunnable(() -> {
-                    if (parquetPath == null) {
-                        return;
-                    }
-                    try {
-                        Files.deleteIfExists(parquetPath);
-                    } catch (IOException e) {
-                        // Best effort cleanup. The temp file may already be deleted or locked by OS/AV.
-                        log.debug("Failed to delete temporary parquet: {}", parquetPath, e);
-                    }
+        return Mono.fromRunnable(() -> deleteTemporaryParquetBlocking(parquetPath))
+                // Cleanup should not depend on executor availability; if we can't schedule, just run inline.
+                .subscribeOn(exportScheduler)
+                .onErrorResume(RejectedExecutionException.class, ex -> {
+                    deleteTemporaryParquetBlocking(parquetPath);
+                    return Mono.empty();
                 })
-                .subscribeOn(Schedulers.fromExecutor(exportExecutor))
                 .then();
+    }
+
+    private void deleteTemporaryParquetBlocking(java.nio.file.Path parquetPath) {
+        if (parquetPath == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(parquetPath);
+        } catch (IOException e) {
+            // Best effort cleanup. The temp file may already be deleted or locked by OS/AV.
+            log.debug("Failed to delete temporary parquet: {}", parquetPath, e);
+        }
     }
 
     /**
      * Generate a Parquet file at {@code ./data/demo.parquet} (relative to user.dir).
      */
     public Mono<java.nio.file.Path> generateDemoParquet(long rows) {
-        return Mono.fromCallable(() -> generateDemoParquetBlocking(rows))
-                .subscribeOn(Schedulers.fromExecutor(exportExecutor));
+        return runOnExportScheduler(() -> generateDemoParquetBlocking(rows));
+    }
+
+    /**
+     * Best-effort guard: fail fast before starting a streaming export if the bounded executor is overloaded.
+     * <p>
+     * This avoids the old {@code CallerRunsPolicy} pitfall (running blocking work on Netty event-loop when saturated),
+     * and makes overload behavior explicit (503).
+     */
+    public void assertExportCapacityOrThrow() {
+        if (!(exportExecutor instanceof ThreadPoolExecutor tpe)) {
+            return;
+        }
+        if (tpe.getQueue().remainingCapacity() > 0) {
+            return;
+        }
+        if (tpe.getActiveCount() < tpe.getMaximumPoolSize()) {
+            return;
+        }
+        throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Export system is busy (bounded executor queue is full)");
     }
 
     private java.nio.file.Path generateDemoParquetBlocking(long rows) throws IOException {
@@ -335,22 +367,44 @@ public class ParquetExportService {
         String safeBaseName = (baseName == null || baseName.isBlank()) ? "data" : baseName;
         String zipEntryName = sanitizeZipEntryName(safeBaseName + ".csv");
 
+        return exportFlux(parquetFile, format, bufferFactory, zipEntryName);
+    }
+
+    private Publisher<DataBuffer> exportFlux(java.nio.file.Path parquetFile,
+                                             FileFormat format,
+                                             DataBufferFactory bufferFactory,
+                                             String zipEntryName) {
         return switch (format) {
             case PARQUET -> DataBufferUtils.read(parquetFile, bufferFactory, props.getChunkSize());
             // CSV/ZIP are generated on-the-fly without creating a full file in memory.
-            case CSV -> DataBufferUtils.outputStreamPublisher(
-                    os -> writeCsvTo(os, parquetFile),
-                    bufferFactory,
-                    exportExecutor,
-                    props.getChunkSize()
-            );
-            case ZIP -> DataBufferUtils.outputStreamPublisher(
-                    os -> writeZipCsvTo(os, parquetFile, zipEntryName),
-                    bufferFactory,
-                    exportExecutor,
-                    props.getChunkSize()
-            );
+            case CSV -> reactor.core.publisher.Flux
+                    .from(DataBufferUtils.outputStreamPublisher(
+                            os -> writeCsvTo(os, parquetFile),
+                            bufferFactory,
+                            exportExecutor,
+                            props.getChunkSize()
+                    ))
+                    .onErrorMap(RejectedExecutionException.class, this::exportRejected);
+            case ZIP -> reactor.core.publisher.Flux
+                    .from(DataBufferUtils.outputStreamPublisher(
+                            os -> writeZipCsvTo(os, parquetFile, zipEntryName),
+                            bufferFactory,
+                            exportExecutor,
+                            props.getChunkSize()
+                    ))
+                    .onErrorMap(RejectedExecutionException.class, this::exportRejected);
         };
+    }
+
+    private RuntimeException exportRejected(RejectedExecutionException ex) {
+        return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Export system is busy (executor rejected the task)", ex);
+    }
+
+    private <T> Mono<T> runOnExportScheduler(Callable<T> task) {
+        return Mono.fromCallable(task)
+                .subscribeOn(exportScheduler)
+                .onErrorMap(RejectedExecutionException.class, this::exportRejected);
     }
 
     private void writeZipCsvTo(OutputStream rawOut, java.nio.file.Path parquetFile, String zipEntryName) {

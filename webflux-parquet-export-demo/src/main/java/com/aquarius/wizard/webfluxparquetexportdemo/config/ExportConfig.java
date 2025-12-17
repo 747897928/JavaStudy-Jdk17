@@ -3,6 +3,8 @@ package com.aquarius.wizard.webfluxparquetexportdemo.config;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.concurrent.*;
 
@@ -38,8 +40,19 @@ public class ExportConfig {
                         return t;
                     }
                 },
-                new ThreadPoolExecutor.CallerRunsPolicy()
+                // Never run blocking export work on the caller thread (might be Netty event-loop).
+                // Reject instead and let the request fail fast (caller can retry later).
+                new ThreadPoolExecutor.AbortPolicy()
         );
     }
-}
 
+    /**
+     * Shared Reactor {@link Scheduler} backed by the same bounded export executor.
+     * <p>
+     * We reuse a single Scheduler instance to avoid creating a new wrapper for every request.
+     */
+    @Bean(destroyMethod = "dispose")
+    public Scheduler exportScheduler(ExecutorService exportExecutor) {
+        return Schedulers.fromExecutorService(exportExecutor);
+    }
+}
