@@ -110,7 +110,7 @@ ZIP 的中央目录在末尾，所以：
 
 代码位置：
 
-- `src/main/java/com/aquarius/wizard/webfluxparquetexportdemo/util/NonClosingOutputStream.java`
+- `src/main/java/com/aquarius/wizard/webfluxparquetexportdemo/io/NonClosingOutputStream.java`
 
 ## 4. “flush 策略”：覆盖小文件 + 大文件
 
@@ -265,8 +265,8 @@ ParquetReader、ZipOutputStream 都是阻塞 IO/CPU 操作，因此必须在专�
 - CSV 写入与转义：`src/main/java/.../util/CsvUtil.java`
 - INT96：`src/main/java/.../util/Int96Util.java`
 - flush/stream 工具：
-  - `src/main/java/.../util/CountingOutputStream.java`
-  - `src/main/java/.../util/NonClosingOutputStream.java`
+  - `src/main/java/.../io/CountingOutputStream.java`
+  - `src/main/java/.../io/NonClosingOutputStream.java`
 - 参数：`src/main/java/.../config/ExportProperties.java` + `src/main/resources/application.yml`
 
 ---

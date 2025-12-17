@@ -1,11 +1,11 @@
 package com.aquarius.wizard.webfluxparquetexportdemo.service;
 
+import com.aquarius.wizard.webfluxparquetexportdemo.io.CountingOutputStream;
+import com.aquarius.wizard.webfluxparquetexportdemo.io.NonClosingOutputStream;
 import com.aquarius.wizard.webfluxparquetexportdemo.config.ExportProperties;
 import com.aquarius.wizard.webfluxparquetexportdemo.model.FileFormat;
-import com.aquarius.wizard.webfluxparquetexportdemo.util.CountingOutputStream;
 import com.aquarius.wizard.webfluxparquetexportdemo.util.CsvUtil;
 import com.aquarius.wizard.webfluxparquetexportdemo.util.Int96Util;
-import com.aquarius.wizard.webfluxparquetexportdemo.util.NonClosingOutputStream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;

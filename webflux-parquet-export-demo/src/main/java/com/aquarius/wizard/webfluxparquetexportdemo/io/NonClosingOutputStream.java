@@ -1,4 +1,4 @@
-package com.aquarius.wizard.webfluxparquetexportdemo.util;
+package com.aquarius.wizard.webfluxparquetexportdemo.io;
 
 import java.io.FilterOutputStream;
 import java.io.IOException;
