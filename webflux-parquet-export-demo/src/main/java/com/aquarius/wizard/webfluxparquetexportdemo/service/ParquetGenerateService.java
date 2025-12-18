@@ -2,7 +2,6 @@ package com.aquarius.wizard.webfluxparquetexportdemo.service;
 
 import com.aquarius.wizard.webfluxparquetexportdemo.config.ExportProperties;
 import com.aquarius.wizard.webfluxparquetexportdemo.demo.DemoParquetGenerator;
-import com.aquarius.wizard.webfluxparquetexportdemo.io.NonClosingOutputStream;
 import com.aquarius.wizard.webfluxparquetexportdemo.io.OutputStreamOutputFile;
 import org.apache.parquet.io.OutputFile;
 import org.reactivestreams.Publisher;
@@ -11,6 +10,7 @@ import org.springframework.core.io.buffer.DataBufferFactory;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StreamUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
@@ -51,7 +51,7 @@ public class ParquetGenerateService {
 
     private void writeParquetTo(OutputStream rawOut, long rows, String filenameHint) {
         try {
-            OutputStream nonClosing = new NonClosingOutputStream(rawOut);
+            OutputStream nonClosing = StreamUtils.nonClosing(rawOut);
             OutputFile outputFile = new OutputStreamOutputFile(nonClosing, filenameHint);
             demoParquetGenerator.generateParquetFile(outputFile, rows, new Random(1234567L));
             nonClosing.flush();
@@ -76,4 +76,3 @@ public class ParquetGenerateService {
                 || msg.contains("abort");
     }
 }
-

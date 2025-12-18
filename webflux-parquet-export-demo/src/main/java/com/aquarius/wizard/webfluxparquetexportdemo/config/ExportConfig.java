@@ -11,6 +11,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 @Configuration
 @EnableConfigurationProperties(ExportProperties.class)
@@ -23,15 +24,15 @@ public class ExportConfig {
      */
     @Bean(destroyMethod = "shutdown")
     public ExecutorService exportExecutor(ExportProperties props) {
-        ExportProperties.ExecutorProperties cfg = props.getExecutorProperties();
+        ExportExecutorProperties cfg = props.getExecutorProperties();
         int poolSize = Math.max(1, cfg.getPoolSize());
         int queueCapacity = Math.max(1, cfg.getQueueCapacity());
 
         return new ThreadPoolExecutor(
                 poolSize,
                 poolSize,
-                cfg.getKeepAlive(),
-                cfg.getKeepAliveUnit(),
+                Math.max(0L, cfg.getKeepAlive().toMillis()),
+                TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(queueCapacity),
                 new ThreadFactory() {
                     private final ThreadFactory delegate = Executors.defaultThreadFactory();

@@ -1,7 +1,6 @@
 package com.aquarius.wizard.webfluxparquetexportdemo.service;
 
 import com.aquarius.wizard.webfluxparquetexportdemo.io.CountingOutputStream;
-import com.aquarius.wizard.webfluxparquetexportdemo.io.NonClosingOutputStream;
 import com.aquarius.wizard.webfluxparquetexportdemo.config.ExportProperties;
 import com.aquarius.wizard.webfluxparquetexportdemo.model.FileFormat;
 import com.aquarius.wizard.webfluxparquetexportdemo.parquet.ParquetToCsvCellValueConverter;
@@ -12,6 +11,7 @@ import org.apache.parquet.example.data.Group;
 import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.example.GroupReadSupport;
+import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.schema.MessageType;
 import org.reactivestreams.Publisher;
@@ -20,7 +20,10 @@ import org.springframework.core.io.buffer.DataBufferFactory;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StreamUtils;
 import org.springframework.web.server.ResponseStatusException;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -28,6 +31,7 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -64,10 +68,12 @@ public class ParquetExportService {
 
     private final ExportProperties props;
     private final ExecutorService exportExecutor;
+    private final Scheduler exportScheduler;
 
-    public ParquetExportService(ExportProperties props, ExecutorService exportExecutor) {
+    public ParquetExportService(ExportProperties props, ExecutorService exportExecutor, Scheduler exportScheduler) {
         this.props = props;
         this.exportExecutor = exportExecutor;
+        this.exportScheduler = exportScheduler;
     }
 
     /**
@@ -95,6 +101,26 @@ public class ParquetExportService {
      */
     public Publisher<DataBuffer> streamExport(java.nio.file.Path parquetFile, FileFormat format, DataBufferFactory bufferFactory) {
         return streamExport(parquetFile, format, bufferFactory, "data");
+    }
+
+    /**
+     * Fail-fast validation executed <b>before</b> starting the streaming response.
+     * <p>
+     * If you configure a safety limit (e.g. maxAllowedRows) it should reject early rather than truncating
+     * in the middle of the streaming download.
+     */
+    public Mono<Void> validateBeforeStreaming(java.nio.file.Path parquetFile, FileFormat format) {
+        long maxAllowedRows = props.getMaxAllowedRows();
+        if (maxAllowedRows <= 0) {
+            return Mono.empty();
+        }
+        if (format == FileFormat.PARQUET) {
+            return Mono.empty();
+        }
+
+        return Mono.fromRunnable(() -> assertRowCountNotExceed(parquetFile, maxAllowedRows))
+                .subscribeOn(exportScheduler)
+                .then();
     }
 
     /**
@@ -147,7 +173,7 @@ public class ParquetExportService {
         try {
             // Important: the OutputStream provided by outputStreamPublisher is owned by Spring.
             // We must NOT close it ourselves (otherwise the HTTP response breaks).
-            OutputStream nonClosing = new NonClosingOutputStream(rawOut);
+            OutputStream nonClosing = StreamUtils.nonClosing(rawOut);
 
             // Add a small buffer to reduce the number of system calls / tiny writes.
             BufferedOutputStream bos = new BufferedOutputStream(nonClosing, props.getOutputBufferSize());
@@ -203,7 +229,6 @@ public class ParquetExportService {
                             long flushEveryBytes,
                             boolean wrapPlainCsvBuffer) {
         long flushThresholdBytes = Math.max(0, flushEveryBytes);
-        long maxRows = props.getMaxRows() <= 0 ? Long.MAX_VALUE : props.getMaxRows();
 
         try {
             Configuration conf = new Configuration();
@@ -213,7 +238,7 @@ public class ParquetExportService {
             CountingOutputStream countingOut = prepareCsvOutputStream(rawOut, wrapPlainCsvBuffer);
             long lastFlushedAt = writeHeaderAndMaybeFlush(countingOut, schema, flushHeader);
 
-            streamCsvRows(conf, parquetPath, schema, countingOut, maxRows, flushThresholdBytes, lastFlushedAt);
+            streamCsvRows(conf, parquetPath, schema, countingOut, flushThresholdBytes, lastFlushedAt);
 
             countingOut.flush();
         } catch (IOException e) {
@@ -227,7 +252,7 @@ public class ParquetExportService {
     private CountingOutputStream prepareCsvOutputStream(OutputStream rawOut, boolean wrapPlainCsvBuffer) {
         OutputStream out = rawOut;
         if (wrapPlainCsvBuffer) {
-            out = new BufferedOutputStream(new NonClosingOutputStream(out), props.getOutputBufferSize());
+            out = new BufferedOutputStream(StreamUtils.nonClosing(out), props.getOutputBufferSize());
         }
         return (out instanceof CountingOutputStream c) ? c : new CountingOutputStream(out);
     }
@@ -244,19 +269,12 @@ public class ParquetExportService {
                                Path parquetPath,
                                MessageType schema,
                                CountingOutputStream out,
-                               long maxRows,
                                long flushThresholdBytes,
                                long lastFlushedAt) throws IOException {
         GroupReadSupport readSupport = new GroupReadSupport();
         try (ParquetReader<Group> reader = ParquetReader.builder(readSupport, parquetPath).withConf(conf).build()) {
-            long rowIndex = 0L;
             Group rowGroup;
             while ((rowGroup = reader.read()) != null) {
-                rowIndex++;
-                if (rowIndex > maxRows) {
-                    break;
-                }
-
                 CsvUtil.writeRow(out, rowGroup, schema, CSV_CHARSET, ParquetToCsvCellValueConverter::toCsvCellValue);
                 if (flushThresholdBytes > 0 && (out.getCount() - lastFlushedAt) >= flushThresholdBytes) {
                     out.flush();
@@ -269,6 +287,31 @@ public class ParquetExportService {
     private MessageType readSchema(Configuration conf, Path hPath) throws IOException {
         try (ParquetFileReader pfr = ParquetFileReader.open(HadoopInputFile.fromPath(hPath, conf))) {
             return pfr.getFileMetaData().getSchema();
+        }
+    }
+
+    private void assertRowCountNotExceed(java.nio.file.Path parquetFile, long maxAllowedRows) {
+        try {
+            Configuration conf = new Configuration();
+            Path hPath = new Path(parquetFile.toUri());
+            long totalRows = readTotalRowCount(conf, hPath);
+            if (totalRows > maxAllowedRows) {
+                throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
+                        "Parquet has " + totalRows + " rows, exceeds maxAllowedRows=" + maxAllowedRows);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private long readTotalRowCount(Configuration conf, Path hPath) throws IOException {
+        try (ParquetFileReader pfr = ParquetFileReader.open(HadoopInputFile.fromPath(hPath, conf))) {
+            List<BlockMetaData> blocks = pfr.getRowGroups();
+            long sum = 0L;
+            for (BlockMetaData block : blocks) {
+                sum += block.getRowCount();
+            }
+            return sum;
         }
     }
 

@@ -3,8 +3,8 @@ package com.aquarius.wizard.webfluxparquetexportdemo.config;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
-import java.util.concurrent.TimeUnit;
 import java.util.zip.Deflater;
 
 @ConfigurationProperties(prefix = "demo.export")
@@ -28,11 +28,16 @@ public class ExportProperties {
     private int outputBufferSize = 64 * 1024;
 
     /**
-     * Safety cap: export at most N rows.
+     * Safety limit: reject exporting CSV/ZIP if the Parquet file has more than N rows.
      * <p>
-     * Note: Parquet -> CSV expansion can be huge, so an optional safety limit can protect servers.
+     * Why this is a "reject" (fail-fast) limit instead of "truncate":
+     * <ul>
+     *   <li>Truncating would produce an incomplete CSV/ZIP download, which is usually worse than a clear error.</li>
+     *   <li>Fail-fast happens before streaming starts, so clients get a proper HTTP error response.</li>
+     * </ul>
+     * Set to {@code 0} to disable the check (unlimited).
      */
-    private long maxRows = 5_000_000L;
+    private long maxAllowedRows = 0L;
 
     /**
      * Flush CSV header immediately (reduce first-byte latency for small outputs).
@@ -72,28 +77,6 @@ public class ExportProperties {
     private int zipLevel = Deflater.BEST_SPEED;
 
     @Getter
-    private final ExecutorProperties executorProperties = new ExecutorProperties();
-
-    /**
-     * Thread-pool settings for the bounded export executor.
-     * <p>
-     * Named {@code ExecutorProperties} to avoid confusion with {@link java.util.concurrent.Executor}.
-     */
-    @Getter
-    @Setter
-    public static class ExecutorProperties {
-        /**
-         * Fixed pool size for blocking export IO.
-         */
-        private int poolSize = Math.min(8, Math.max(2, Runtime.getRuntime().availableProcessors()));
-
-        /**
-         * Bounded queue capacity: avoid infinite task accumulation.
-         */
-        private int queueCapacity = 64;
-
-        private long keepAlive = 60L;
-
-        private TimeUnit keepAliveUnit = TimeUnit.SECONDS;
-    }
+    @NestedConfigurationProperty
+    private final ExportExecutorProperties executorProperties = new ExportExecutorProperties();
 }

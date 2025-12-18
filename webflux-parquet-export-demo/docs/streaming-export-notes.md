@@ -79,7 +79,7 @@ Spring Framework 6.1+ 提供：
 
 关键点：**内存上限主要由几个固定 buffer 决定（chunkSize、Zip deflate 内部 buffer、BufferedOutputStream 等），而不是由文件总大小决定**。
 
-## 3. ZIP 的流式写出与 `NonClosingOutputStream`
+## 3. ZIP 的流式写出与 `StreamUtils.nonClosing(...)`
 
 ### 3.1 ZIP 结构与 `finish()`
 
@@ -88,15 +88,15 @@ ZIP 的中央目录在末尾，所以：
 - `putNextEntry("<baseName>.csv")` 之后写 entry 内容，可以持续写出并持续被压缩
   - 但只有写到 `closeEntry()` + `finish()`（或 `close()`）后，ZIP 才是完整可解压文件
 
-### 3.2 为什么要 `NonClosingOutputStream`
+### 3.2 为什么要 `StreamUtils.nonClosing(...)`
 
 在 WebFlux 里，响应体由框架控制生命周期：`outputStreamPublisher` 提供的底层 OutputStream 不希望被业务代码提前关闭。
 
 但 `ZipOutputStream.close()` 默认会关闭底层流。
 
-因此实现中用了：
+因此实现中用了 Spring 提供的：
 
-- `NonClosingOutputStream`：拦截 `close()`，只做 `flush()`，不关闭底层流
+- `StreamUtils.nonClosing(outputStream)`：返回一个“忽略 close()”的 OutputStream wrapper，不让业务代码提前关闭底层 HTTP 响应流
 
 这样可以：
 
@@ -105,12 +105,12 @@ ZIP 的中央目录在末尾，所以：
 
 补充：这不等于“永远不 close”。
 
-- `NonClosingOutputStream` 只是不让 <u>业务代码</u> 提前关闭“HTTP 响应底层流”
+- `StreamUtils.nonClosing(...)` 只是不让 <u>业务代码</u> 提前关闭“HTTP 响应底层流”
 - 当 `outputStreamPublisher` 的 consumer 正常结束（或异常/取消）后，Spring 会在合适的时机关闭/回收底层资源
 
-代码位置：
+实现位置：
 
-- `src/main/java/com/aquarius/wizard/webfluxparquetexportdemo/io/NonClosingOutputStream.java`
+- `src/main/java/.../service/ParquetExportService.java` / `src/main/java/.../service/ParquetGenerateService.java`（调用 `StreamUtils.nonClosing(...)`）
 
 ## 4. “flush 策略”：覆盖小文件 + 大文件
 
@@ -152,7 +152,7 @@ flush 不是用来防 OOM 的；防 OOM 的关键仍是“流式 + 有界缓冲 
 
 - `src/main/java/com/aquarius/wizard/webfluxparquetexportdemo/service/ParquetExportService.java`
   - `writeCsvTo(...)`：header flush + bytes threshold flush
-  - `writeZipCsvTo(...)`：NonClosingOutputStream + zip-level + finish
+  - `writeZipCsvTo(...)`：StreamUtils.nonClosing + zip-level + finish
 
 ### 4.3 为什么优先“按字节阈值”而不是“按行数阈值”
 
@@ -216,6 +216,24 @@ CSV 是文本格式；为了保证跨系统/工具可读，本项目采用约定
 - 本示例的“模拟下载”会使用随机字母/数字作为 baseName（例如 `AbC123xYz890`），并将本地临时文件命名为 `AbC123xYz890.parquet`
 - 因此导出响应文件名会自然符合：`AbC123xYz890.parquet` / `AbC123xYz890.csv` / `AbC123xYz890.zip`（ZIP 内 entry 为 `AbC123xYz890.csv`）
 
+## 6.2 导出完整性与可选安全限制（拒绝而不是截断）
+
+某些服务会加一个“最多导出 N 行”的限制来保护服务器，但如果把它做成“导出到一半就 break”，会导致：
+
+- CSV/ZIP 文件是“语法正确但语义不完整”的截断结果
+- 客户端拿到的文件很难察觉是被截断的（风险比直接报错更大）
+
+因此本项目采用 **reject（fail-fast）** 的策略：
+
+- 配置项：`demo.export.max-allowed-rows`（默认 `0` 表示不限制）
+- 仅对 CSV/ZIP 生效（PARQUET 原样下载不需要）
+- 在开始 streaming 前读取 Parquet footer 计算总行数，超过限制则直接返回 HTTP 413
+
+对应代码位置：
+
+- `src/main/java/com/aquarius/wizard/webfluxparquetexportdemo/service/ParquetExportService.java`：`validateBeforeStreaming(...)`
+- `src/main/java/com/aquarius/wizard/webfluxparquetexportdemo/service/DemoDownloadService.java`：在设置响应头/开始 writeWith 前先做校验
+
 ## 7. 线程模型：不要堵 Netty event-loop
 
 ParquetReader、ZipOutputStream 都是阻塞 IO/CPU 操作，因此必须在专用线程池执行。
@@ -269,7 +287,7 @@ ParquetReader、ZipOutputStream 都是阻塞 IO/CPU 操作，因此必须在专�
 - INT96：`src/main/java/.../util/Int96Util.java`
 - flush/stream 工具：
   - `src/main/java/.../io/CountingOutputStream.java`
-  - `src/main/java/.../io/NonClosingOutputStream.java`
+  - 备注：也可以用 Apache Commons IO / Guava 的同名实现，但本项目为减少依赖只保留了一个很小的自实现
 - 参数：`src/main/java/.../config/ExportProperties.java` + `src/main/resources/application.yml`
 
 ---
@@ -459,11 +477,11 @@ ParquetReader、ZipOutputStream 都是阻塞 IO/CPU 操作，因此必须在专�
 > - 顺序：`putNextEntry(...)` → 持续写 entry 内容 → `closeEntry()` → `finish()`（本项目已按此实现）
 > - `finish()` 会写 ZIP 中央目录（没有它 ZIP 可能不完整不可解压）
 >
-> ### 9.3 为什么要 `NonClosingOutputStream`
+> ### 9.3 为什么要 `StreamUtils.nonClosing(...)`
 >
 > - `ZipOutputStream.close()` 默认会关闭底层流
 > - WebFlux 响应底层流由 Spring 管理，不希望业务代码提前 close
-> - 本项目用 `NonClosingOutputStream` 把 `close()` 变成 `flush()`：让 ZIP wrapper 能释放自身资源，但不会把 HTTP 响应流提前关掉
+> - 本项目用 `StreamUtils.nonClosing(...)` 防止业务代码提前关闭底层 HTTP 响应流：让 ZIP wrapper 能正常 close/释放资源，但不会把响应流提前关掉
 >
 > ### 9.4 客户端取消/断开时是否会“继续读 parquet 做无用功”
 >

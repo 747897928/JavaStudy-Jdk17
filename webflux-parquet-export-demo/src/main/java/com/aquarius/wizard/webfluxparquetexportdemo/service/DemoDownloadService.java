@@ -38,7 +38,8 @@ public class DemoDownloadService {
 
         return Mono.usingWhen(
                 stagingService.stageParquetFromSource(source, rows),
-                parquetFile -> writeResponse(parquetFile, format, response),
+                parquetFile -> exportService.validateBeforeStreaming(parquetFile.toPath(), format)
+                        .then(Mono.defer(() -> writeResponse(parquetFile, format, response))),
                 cleanup,
                 (parquetFile, error) -> cleanup.apply(parquetFile),
                 cleanup
@@ -86,4 +87,3 @@ public class DemoDownloadService {
         }
     }
 }
-

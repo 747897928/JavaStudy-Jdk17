@@ -43,6 +43,7 @@ class DemoDownloadServiceTest {
         assertThat(staged.createNewFile()).isTrue();
 
         doNothing().when(exportService).assertExportCapacityOrThrow();
+        when(exportService.validateBeforeStreaming(any(), any())).thenReturn(Mono.empty());
         when(stagingService.stageParquetFromSource(anyString(), any())).thenReturn(Mono.just(staged));
         when(stagingService.deleteStagedParquet(any())).thenReturn(Mono.empty());
         when(exportService.streamExport(any(), any(), any(), anyString())).thenReturn(Flux.<DataBuffer>empty());
@@ -57,6 +58,7 @@ class DemoDownloadServiceTest {
         assertThat(response.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION))
                 .isEqualTo("attachment; filename=\"abc123.zip\"");
 
+        verify(exportService).validateBeforeStreaming(staged.toPath(), FileFormat.ZIP);
         verify(stagingService).deleteStagedParquet(staged);
     }
 }

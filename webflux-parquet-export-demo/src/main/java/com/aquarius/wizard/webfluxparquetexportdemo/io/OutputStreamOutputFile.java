@@ -11,7 +11,7 @@ import java.io.OutputStream;
  * <p>
  * Parquet writers close their {@link PositionOutputStream} on completion.
  * When used with WebFlux {@code DataBufferUtils.outputStreamPublisher}, the underlying HTTP response stream
- * must be managed by Spring, so callers should wrap the provided stream with {@link NonClosingOutputStream}.
+ * must be managed by Spring, so callers should wrap the provided stream with {@code StreamUtils.nonClosing(...)}.
  */
 public final class OutputStreamOutputFile implements OutputFile {
 
@@ -84,4 +84,3 @@ public final class OutputStreamOutputFile implements OutputFile {
         }
     }
 }
-
