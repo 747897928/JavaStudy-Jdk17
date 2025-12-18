@@ -78,6 +78,10 @@ public class ParquetStagingService {
     }
 
     private File stageParquetFromSourceBlocking(String sourceUrl, Long rows) throws IOException {
+        if (sourceUrl != null && !sourceUrl.isBlank()) {
+            log.debug("Staging parquet from sourceUrl: {}", sourceUrl);
+        }
+
         Path tmpRoot = Path.of(System.getProperty("user.dir"), "data", "tmp");
         Files.createDirectories(tmpRoot);
 

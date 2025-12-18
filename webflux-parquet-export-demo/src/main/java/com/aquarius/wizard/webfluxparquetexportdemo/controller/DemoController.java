@@ -3,6 +3,8 @@ package com.aquarius.wizard.webfluxparquetexportdemo.controller;
 import com.aquarius.wizard.webfluxparquetexportdemo.model.FileFormat;
 import com.aquarius.wizard.webfluxparquetexportdemo.service.DemoDownloadService;
 import com.aquarius.wizard.webfluxparquetexportdemo.service.DemoGenerateService;
+import org.reactivestreams.Publisher;
+import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -44,7 +46,7 @@ public class DemoController {
      * <p>
      * Notes:
      * <ul>
-     *   <li>We return the response body as a {@link Publisher} of {@link DataBuffer}.</li>
+     *   <li>WebFlux ultimately writes a {@link Publisher} of {@link DataBuffer} to the HTTP response.</li>
      *   <li>{@code response.writeWith(...)} is backpressure-aware: if the client is slow, the server writes slower.</li>
      *   <li>For CSV/ZIP formats, we use Spring's {@code DataBufferUtils.outputStreamPublisher} to bridge blocking IO
      *       (ParquetReader/ZipOutputStream) into a streaming HTTP response without keeping the whole file in memory.</li>

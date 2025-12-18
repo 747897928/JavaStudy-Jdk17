@@ -21,6 +21,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.server.ResponseStatusException;
+import reactor.core.publisher.Flux;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -119,7 +120,7 @@ public class ParquetExportService {
         return switch (format) {
             case PARQUET -> DataBufferUtils.read(parquetFile, bufferFactory, props.getChunkSize());
             // CSV/ZIP are generated on-the-fly without creating a full file in memory.
-            case CSV -> reactor.core.publisher.Flux
+            case CSV -> Flux
                     .from(DataBufferUtils.outputStreamPublisher(
                             os -> writeCsvTo(os, parquetFile),
                             bufferFactory,
@@ -127,7 +128,7 @@ public class ParquetExportService {
                             props.getChunkSize()
                     ))
                     .onErrorMap(RejectedExecutionException.class, this::exportRejected);
-            case ZIP -> reactor.core.publisher.Flux
+            case ZIP -> Flux
                 .from(DataBufferUtils.outputStreamPublisher(
                         os -> writeZipCsvTo(os, parquetFile, zipEntryName),
                         bufferFactory,
@@ -226,7 +227,7 @@ public class ParquetExportService {
     private CountingOutputStream prepareCsvOutputStream(OutputStream rawOut, boolean wrapPlainCsvBuffer) {
         OutputStream out = rawOut;
         if (wrapPlainCsvBuffer) {
-            out = new BufferedOutputStream(StreamUtils.nonClosing(out), props.getOutputBufferSize());
+            out = new BufferedOutputStream(out, props.getOutputBufferSize());
         }
         return (out instanceof CountingOutputStream c) ? c : new CountingOutputStream(out);
     }
