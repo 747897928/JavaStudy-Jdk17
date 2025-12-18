@@ -13,6 +13,7 @@ import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.Base64;
 
 /**
  * Convert a single Parquet cell (physical + logical type) into a value suitable for CSV output.
@@ -22,11 +23,13 @@ import java.time.LocalTime;
  */
 public final class ParquetToCsvCellValueConverter {
 
+    private static final Base64.Encoder BASE64 = Base64.getEncoder();
+
     private ParquetToCsvCellValueConverter() {
     }
 
     /**
-     * @return {@code null} for empty cell; {@code String/Number/Boolean/...} for text; {@code byte[]} for raw bytes.
+     * @return {@code null} for empty cell; {@code String/Number/Boolean/...} for text.
      */
     public static Object toCsvCellValue(Group rowGroup, Type fieldType, int fieldIndex) {
         if (rowGroup.getFieldRepetitionCount(fieldIndex) == 0) {
@@ -68,7 +71,8 @@ public final class ParquetToCsvCellValueConverter {
                     yield binaryValue.toStringUsingUTF8();
                 }
 
-                yield binaryValue.getBytes();
+                // For arbitrary bytes we output Base64 to keep CSV valid UTF-8.
+                yield BASE64.encodeToString(binaryValue.getBytes());
             }
 
             default -> rowGroup.getValueToString(fieldIndex, 0);
@@ -122,4 +126,3 @@ public final class ParquetToCsvCellValueConverter {
         return Long.toString(value);
     }
 }
-

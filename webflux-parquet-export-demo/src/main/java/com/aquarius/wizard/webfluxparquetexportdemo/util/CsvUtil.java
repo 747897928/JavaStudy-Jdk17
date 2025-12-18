@@ -17,8 +17,7 @@ import java.nio.charset.Charset;
  * Note:
  * <ul>
  *   <li>CSV is just bytes. We write bytes to the HTTP response as we read rows from Parquet.</li>
- *   <li>For {@code BINARY} columns, this demo may write raw bytes into CSV and relies on the CSV file being
- *       interpreted as ISO-8859-1 to keep a 1:1 mapping between byte values (0..255) and characters (see notes).</li>
+ *   <li>For {@code BINARY} columns, this demo outputs Base64 text so that the CSV stays valid UTF-8.</li>
  * </ul>
  */
 public final class CsvUtil {
@@ -29,8 +28,7 @@ public final class CsvUtil {
     @FunctionalInterface
     public interface ValueExtractor {
         /**
-         * @return {@code null} for an empty cell; {@code String/Number/Boolean/...} for textual output;
-         * {@code byte[]} for raw bytes output.
+         * @return {@code null} for an empty cell; {@code String/Number/Boolean/...} for textual output.
          */
         Object getValue(Group rowGroup, Type fieldType, int fieldIndex);
     }
@@ -61,10 +59,7 @@ public final class CsvUtil {
                 continue; // null -> empty
             }
 
-            if (cellValue instanceof byte[] rawBytes) {
-                // "raw bytes" cell: still apply CSV escaping to keep output parseable.
-                writeCsvEscapedBytes(out, rawBytes);
-            } else if (cellValue instanceof String text) {
+            if (cellValue instanceof String text) {
                 writeCsvEscapedString(out, text, charset);
             } else {
                 writeCsvEscapedString(out, cellValue.toString(), charset);

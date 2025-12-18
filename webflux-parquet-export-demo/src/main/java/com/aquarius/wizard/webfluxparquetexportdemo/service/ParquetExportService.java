@@ -57,10 +57,10 @@ public class ParquetExportService {
     /**
      * CSV encoding used by this demo.
      * <p>
-     * For BINARY: we output raw bytes to the CSV stream and ask the client to interpret CSV as ISO-8859-1 so that
-     * bytes(0..255) map 1:1 to characters.
+     * We use UTF-8 for interoperability.
+     * For {@code BINARY} columns we output Base64 text (see {@code ParquetToCsvCellValueConverter}) so the CSV stays valid UTF-8.
      */
-    public static final Charset CSV_CHARSET = StandardCharsets.ISO_8859_1;
+    public static final Charset CSV_CHARSET = StandardCharsets.UTF_8;
 
     private final ExportProperties props;
     private final ExecutorService exportExecutor;
