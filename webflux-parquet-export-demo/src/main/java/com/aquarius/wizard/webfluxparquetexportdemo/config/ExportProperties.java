@@ -28,18 +28,6 @@ public class ExportProperties {
     private int outputBufferSize = 64 * 1024;
 
     /**
-     * Safety limit: reject exporting CSV/ZIP if the Parquet file has more than N rows.
-     * <p>
-     * Why this is a "reject" (fail-fast) limit instead of "truncate":
-     * <ul>
-     *   <li>Truncating would produce an incomplete CSV/ZIP download, which is usually worse than a clear error.</li>
-     *   <li>Fail-fast happens before streaming starts, so clients get a proper HTTP error response.</li>
-     * </ul>
-     * Set to {@code 0} to disable the check (unlimited).
-     */
-    private long maxAllowedRows = 0L;
-
-    /**
      * Flush CSV header immediately (reduce first-byte latency for small outputs).
      * <p>
      * This does not change correctness; it only helps the client see the download start sooner.

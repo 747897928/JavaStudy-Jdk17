@@ -11,7 +11,6 @@ import org.apache.parquet.example.data.Group;
 import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.example.GroupReadSupport;
-import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.schema.MessageType;
 import org.reactivestreams.Publisher;
@@ -22,8 +21,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.server.ResponseStatusException;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Scheduler;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -31,7 +28,6 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -68,12 +64,10 @@ public class ParquetExportService {
 
     private final ExportProperties props;
     private final ExecutorService exportExecutor;
-    private final Scheduler exportScheduler;
 
-    public ParquetExportService(ExportProperties props, ExecutorService exportExecutor, Scheduler exportScheduler) {
+    public ParquetExportService(ExportProperties props, ExecutorService exportExecutor) {
         this.props = props;
         this.exportExecutor = exportExecutor;
-        this.exportScheduler = exportScheduler;
     }
 
     /**
@@ -101,26 +95,6 @@ public class ParquetExportService {
      */
     public Publisher<DataBuffer> streamExport(java.nio.file.Path parquetFile, FileFormat format, DataBufferFactory bufferFactory) {
         return streamExport(parquetFile, format, bufferFactory, "data");
-    }
-
-    /**
-     * Fail-fast validation executed <b>before</b> starting the streaming response.
-     * <p>
-     * If you configure a safety limit (e.g. maxAllowedRows) it should reject early rather than truncating
-     * in the middle of the streaming download.
-     */
-    public Mono<Void> validateBeforeStreaming(java.nio.file.Path parquetFile, FileFormat format) {
-        long maxAllowedRows = props.getMaxAllowedRows();
-        if (maxAllowedRows <= 0) {
-            return Mono.empty();
-        }
-        if (format == FileFormat.PARQUET) {
-            return Mono.empty();
-        }
-
-        return Mono.fromRunnable(() -> assertRowCountNotExceed(parquetFile, maxAllowedRows))
-                .subscribeOn(exportScheduler)
-                .then();
     }
 
     /**
@@ -287,31 +261,6 @@ public class ParquetExportService {
     private MessageType readSchema(Configuration conf, Path hPath) throws IOException {
         try (ParquetFileReader pfr = ParquetFileReader.open(HadoopInputFile.fromPath(hPath, conf))) {
             return pfr.getFileMetaData().getSchema();
-        }
-    }
-
-    private void assertRowCountNotExceed(java.nio.file.Path parquetFile, long maxAllowedRows) {
-        try {
-            Configuration conf = new Configuration();
-            Path hPath = new Path(parquetFile.toUri());
-            long totalRows = readTotalRowCount(conf, hPath);
-            if (totalRows > maxAllowedRows) {
-                throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
-                        "Parquet has " + totalRows + " rows, exceeds maxAllowedRows=" + maxAllowedRows);
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    private long readTotalRowCount(Configuration conf, Path hPath) throws IOException {
-        try (ParquetFileReader pfr = ParquetFileReader.open(HadoopInputFile.fromPath(hPath, conf))) {
-            List<BlockMetaData> blocks = pfr.getRowGroups();
-            long sum = 0L;
-            for (BlockMetaData block : blocks) {
-                sum += block.getRowCount();
-            }
-            return sum;
         }
     }
 

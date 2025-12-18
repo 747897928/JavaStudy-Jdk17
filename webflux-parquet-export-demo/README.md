@@ -97,7 +97,6 @@ WebFlux 基于 Reactive Streams：下游会通过 `request(n)` 表示“我现�
 - CSV 写完 header 会立刻 `flush()` 一次，降低“首包延迟”（小输出也能尽快开始下发）
 - 后续按“写出字节阈值”低频 `flush()`（配置项 `demo.export.csv-flush-every-bytes`），避免每行 flush 的性能灾难
 - ZIP 默认不做周期性 flush（或设置更大的阈值 `demo.export.zip-flush-every-bytes`），避免频繁 flush 影响 deflate 压缩效率
-- 可选安全限制：`demo.export.max-allowed-rows`（默认 0=不限制）。它会在开始 streaming 前读取 Parquet footer 做行数校验，超过则直接返回 HTTP 413；不会导出“截断的不完整 CSV/ZIP”。
 
 ## 7. 为什么 ZipOutputStream 可以边写边压缩
 

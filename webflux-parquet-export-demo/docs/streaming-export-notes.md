@@ -216,24 +216,6 @@ CSV 是文本格式；为了保证跨系统/工具可读，本项目采用约定
 - 本示例的“模拟下载”会使用随机字母/数字作为 baseName（例如 `AbC123xYz890`），并将本地临时文件命名为 `AbC123xYz890.parquet`
 - 因此导出响应文件名会自然符合：`AbC123xYz890.parquet` / `AbC123xYz890.csv` / `AbC123xYz890.zip`（ZIP 内 entry 为 `AbC123xYz890.csv`）
 
-## 6.2 导出完整性与可选安全限制（拒绝而不是截断）
-
-某些服务会加一个“最多导出 N 行”的限制来保护服务器，但如果把它做成“导出到一半就 break”，会导致：
-
-- CSV/ZIP 文件是“语法正确但语义不完整”的截断结果
-- 客户端拿到的文件很难察觉是被截断的（风险比直接报错更大）
-
-因此本项目采用 **reject（fail-fast）** 的策略：
-
-- 配置项：`demo.export.max-allowed-rows`（默认 `0` 表示不限制）
-- 仅对 CSV/ZIP 生效（PARQUET 原样下载不需要）
-- 在开始 streaming 前读取 Parquet footer 计算总行数，超过限制则直接返回 HTTP 413
-
-对应代码位置：
-
-- `src/main/java/com/aquarius/wizard/webfluxparquetexportdemo/service/ParquetExportService.java`：`validateBeforeStreaming(...)`
-- `src/main/java/com/aquarius/wizard/webfluxparquetexportdemo/service/DemoDownloadService.java`：在设置响应头/开始 writeWith 前先做校验
-
 ## 7. 线程模型：不要堵 Netty event-loop
 
 ParquetReader、ZipOutputStream 都是阻塞 IO/CPU 操作，因此必须在专用线程池执行。
