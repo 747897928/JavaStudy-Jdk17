@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ParquetGenerateServiceTest {
 
     @Test
-    void streamGeneratedParquet_startsWithPar1() {
+    void streamGeneratedParquetStartsWithPar1() {
         ExportProperties props = new ExportProperties();
         props.setChunkSize(1024);
         ExecutorService executor = Executors.newSingleThreadExecutor();

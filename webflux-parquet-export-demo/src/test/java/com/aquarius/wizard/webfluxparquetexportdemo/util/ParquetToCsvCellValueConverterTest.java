@@ -1,5 +1,6 @@
-package com.aquarius.wizard.webfluxparquetexportdemo.parquet;
+package com.aquarius.wizard.webfluxparquetexportdemo.util;
 
+import com.aquarius.wizard.webfluxparquetexportdemo.parquet.ParquetToCsvCellValueConverter;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.example.data.simple.SimpleGroupFactory;
 import org.apache.parquet.io.api.Binary;
@@ -14,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ParquetToCsvCellValueConverterTest {
 
     @Test
-    void binaryNonString_isBase64() {
+    void binaryNonStringIsBase64() {
         MessageType schema = MessageTypeParser.parseMessageType("""
                 message demo {
                   optional binary bin;
@@ -30,7 +31,7 @@ class ParquetToCsvCellValueConverterTest {
     }
 
     @Test
-    void binaryUtf8_isPlainString() {
+    void binaryUtf8IsPlainString() {
         MessageType schema = MessageTypeParser.parseMessageType("""
                 message demo {
                   optional binary s (UTF8);
@@ -45,7 +46,7 @@ class ParquetToCsvCellValueConverterTest {
     }
 
     @Test
-    void int32Date_isIsoDateString() {
+    void int32DateIsIsoDateString() {
         MessageType schema = MessageTypeParser.parseMessageType("""
                 message demo {
                   optional int32 d (DATE);
@@ -59,4 +60,3 @@ class ParquetToCsvCellValueConverterTest {
         assertThat(cell).isEqualTo("1970-01-01");
     }
 }
-

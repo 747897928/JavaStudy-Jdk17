@@ -202,64 +202,67 @@ public class ParquetExportService {
                             boolean flushHeader,
                             long flushEveryBytes,
                             boolean wrapPlainCsvBuffer) {
-        Configuration conf = new Configuration();
-        Path parquetPath = new Path(parquetFile.toUri());
-
         long flushThresholdBytes = Math.max(0, flushEveryBytes);
         long maxRows = props.getMaxRows() <= 0 ? Long.MAX_VALUE : props.getMaxRows();
 
         try {
+            Configuration conf = new Configuration();
+            Path parquetPath = new Path(parquetFile.toUri());
             MessageType schema = readSchema(conf, parquetPath);
 
-            OutputStream out = rawOut;
-            if (wrapPlainCsvBuffer) {
-                // Plain CSV writing can be very "chatty" (commas, quotes, newlines).
-                // BufferedOutputStream reduces the number of underlying write() calls.
-                out = new BufferedOutputStream(new NonClosingOutputStream(out), props.getOutputBufferSize());
-            }
-            CountingOutputStream countingOut = (out instanceof CountingOutputStream c) ? c : new CountingOutputStream(out);
+            CountingOutputStream countingOut = prepareCsvOutputStream(rawOut, wrapPlainCsvBuffer);
+            long lastFlushedAt = writeHeaderAndMaybeFlush(countingOut, schema, flushHeader);
 
-            CsvUtil.writeHeader(countingOut, schema, CSV_CHARSET);
-            if (flushHeader) {
-                // Flush once after header so small outputs start downloading immediately.
-                countingOut.flush();
-            }
-            long lastFlushedAt = countingOut.getCount();
+            streamCsvRows(conf, parquetPath, schema, countingOut, maxRows, flushThresholdBytes, lastFlushedAt);
 
-            GroupReadSupport readSupport = new GroupReadSupport();
-            try (ParquetReader<Group> reader = ParquetReader.builder(readSupport, parquetPath).withConf(conf).build()) {
-                long row = 0L;
-                Group rowGroup;
-                while ((rowGroup = reader.read()) != null) {
-                    row++;
-                    if (row > maxRows) {
-                        break;
-                    }
-
-                    try {
-                        CsvUtil.writeRow(countingOut, rowGroup, schema, CSV_CHARSET, ParquetToCsvCellValueConverter::toCsvCellValue);
-                        if (flushThresholdBytes > 0 && (countingOut.getCount() - lastFlushedAt) >= flushThresholdBytes) {
-                            // Flush is for "latency/progress feel", not for memory safety.
-                            // Memory safety mainly comes from streaming + backpressure + bounded buffers.
-                            countingOut.flush();
-                            lastFlushedAt = countingOut.getCount();
-                        }
-                    } catch (IOException e) {
-                        if (isClientAbort(e)) {
-                            return;
-                        }
-                        throw e;
-                    }
-                }
-            }
-
-            // Final flush to push out remaining buffered bytes.
             countingOut.flush();
         } catch (IOException e) {
             if (isClientAbort(e)) {
                 return;
             }
             throw new UncheckedIOException(e);
+        }
+    }
+
+    private CountingOutputStream prepareCsvOutputStream(OutputStream rawOut, boolean wrapPlainCsvBuffer) {
+        OutputStream out = rawOut;
+        if (wrapPlainCsvBuffer) {
+            out = new BufferedOutputStream(new NonClosingOutputStream(out), props.getOutputBufferSize());
+        }
+        return (out instanceof CountingOutputStream c) ? c : new CountingOutputStream(out);
+    }
+
+    private long writeHeaderAndMaybeFlush(CountingOutputStream out, MessageType schema, boolean flushHeader) throws IOException {
+        CsvUtil.writeHeader(out, schema, CSV_CHARSET);
+        if (flushHeader) {
+            out.flush();
+        }
+        return out.getCount();
+    }
+
+    private void streamCsvRows(Configuration conf,
+                               Path parquetPath,
+                               MessageType schema,
+                               CountingOutputStream out,
+                               long maxRows,
+                               long flushThresholdBytes,
+                               long lastFlushedAt) throws IOException {
+        GroupReadSupport readSupport = new GroupReadSupport();
+        try (ParquetReader<Group> reader = ParquetReader.builder(readSupport, parquetPath).withConf(conf).build()) {
+            long rowIndex = 0L;
+            Group rowGroup;
+            while ((rowGroup = reader.read()) != null) {
+                rowIndex++;
+                if (rowIndex > maxRows) {
+                    break;
+                }
+
+                CsvUtil.writeRow(out, rowGroup, schema, CSV_CHARSET, ParquetToCsvCellValueConverter::toCsvCellValue);
+                if (flushThresholdBytes > 0 && (out.getCount() - lastFlushedAt) >= flushThresholdBytes) {
+                    out.flush();
+                    lastFlushedAt = out.getCount();
+                }
+            }
         }
     }
 

@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CsvUtilTest {
 
     @Test
-    void writeHeaderAndRow_utf8Escaping() throws Exception {
+    void writeHeaderAndRowUtf8Escaping() throws Exception {
         MessageType schema = MessageTypeParser.parseMessageType("""
                 message demo {
                   optional binary a;

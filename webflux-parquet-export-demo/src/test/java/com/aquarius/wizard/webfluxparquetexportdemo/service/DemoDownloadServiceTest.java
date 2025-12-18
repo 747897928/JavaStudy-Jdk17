@@ -38,7 +38,7 @@ class DemoDownloadServiceTest {
     ParquetStagingService stagingService;
 
     @Test
-    void download_setsHeadersAndCleansUp() throws Exception {
+    void downloadSetsHeadersAndCleansUp() throws Exception {
         File staged = tempDir.resolve("abc123.parquet").toFile();
         assertThat(staged.createNewFile()).isTrue();
 
@@ -60,4 +60,3 @@ class DemoDownloadServiceTest {
         verify(stagingService).deleteStagedParquet(staged);
     }
 }
-
