@@ -68,11 +68,16 @@ public class ParquetGenerateService {
                 "Export system is busy (executor rejected the task)", ex);
     }
 
-    private boolean isClientAbort(IOException e) {
-        String msg = (e.getMessage() == null) ? "" : e.getMessage().toLowerCase();
-        return msg.contains("broken pipe")
-                || msg.contains("connection reset")
-                || msg.contains("forcibly closed")
-                || msg.contains("abort");
+    private boolean isClientAbort(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause()) {
+            String msg = (t.getMessage() == null) ? "" : t.getMessage().toLowerCase();
+            if (msg.contains("broken pipe")
+                    || msg.contains("connection reset")
+                    || msg.contains("forcibly closed")
+                    || msg.contains("abort")) {
+                return true;
+            }
+        }
+        return false;
     }
 }
