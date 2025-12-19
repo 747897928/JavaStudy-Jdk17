@@ -14,6 +14,8 @@ import org.apache.parquet.hadoop.example.GroupReadSupport;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.schema.MessageType;
 import org.reactivestreams.Publisher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferFactory;
 import org.springframework.core.io.buffer.DataBufferUtils;
@@ -54,6 +56,8 @@ import java.util.zip.ZipOutputStream;
  */
 @Service
 public class ParquetExportService {
+
+    private static final Logger log = LoggerFactory.getLogger(ParquetExportService.class);
 
     /**
      * CSV encoding used by this demo.
@@ -204,20 +208,33 @@ public class ParquetExportService {
                             long flushEveryBytes,
                             boolean wrapPlainCsvBuffer) {
         long flushThresholdBytes = Math.max(0, flushEveryBytes);
+        long startedAtNanos = System.nanoTime();
+        CountingOutputStream countingOut = null;
 
         try {
             Configuration conf = new Configuration();
             Path parquetPath = new Path(parquetFile.toUri());
             MessageType schema = readSchema(conf, parquetPath);
 
-            CountingOutputStream countingOut = prepareCsvOutputStream(rawOut, wrapPlainCsvBuffer);
+            countingOut = prepareCsvOutputStream(rawOut, wrapPlainCsvBuffer);
             long lastFlushedAt = writeHeaderAndMaybeFlush(countingOut, schema, flushHeader);
 
             streamCsvRows(conf, parquetPath, schema, countingOut, flushThresholdBytes, lastFlushedAt);
 
             countingOut.flush();
+
+            if (wrapPlainCsvBuffer) {
+                long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000L;
+                log.debug("CSV export completed: parquetFile={}, csvBytes={}, elapsedMs={}",
+                        parquetFile.getFileName(), countingOut.getCount(), elapsedMs);
+            }
         } catch (IOException e) {
             if (isClientAbort(e)) {
+                if (wrapPlainCsvBuffer && countingOut != null) {
+                    long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000L;
+                    log.debug("CSV export aborted by client: parquetFile={}, csvBytesSoFar={}, elapsedMs={}",
+                            parquetFile.getFileName(), countingOut.getCount(), elapsedMs);
+                }
                 return;
             }
             throw new UncheckedIOException(e);

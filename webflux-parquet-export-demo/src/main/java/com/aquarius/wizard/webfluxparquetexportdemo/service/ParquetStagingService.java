@@ -107,6 +107,9 @@ public class ParquetStagingService {
                 Files.copy(inputStream, localParquet, StandardCopyOption.REPLACE_EXISTING);
             }
 
+            log.debug("Staged parquet: fileName={}, rows={}, parquetBytes={}",
+                    localParquet.getFileName(), rowsToGenerate, Files.size(localParquet));
+
             return localParquet.toFile();
         } catch (IOException e) {
             // Best effort cleanup on failure.
