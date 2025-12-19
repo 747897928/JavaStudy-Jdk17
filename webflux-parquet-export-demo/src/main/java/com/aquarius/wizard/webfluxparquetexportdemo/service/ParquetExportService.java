@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
+import reactor.netty.channel.AbortedException;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -31,6 +32,8 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.channels.ClosedChannelException;
+import java.util.Locale;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -182,6 +185,11 @@ public class ParquetExportService {
                 return;
             }
             throw new UncheckedIOException(e);
+        } catch (RuntimeException e) {
+            if (isClientAbort(e)) {
+                return;
+            }
+            throw e;
         }
     }
 
@@ -238,6 +246,16 @@ public class ParquetExportService {
                 return;
             }
             throw new UncheckedIOException(e);
+        } catch (RuntimeException e) {
+            if (isClientAbort(e)) {
+                if (wrapPlainCsvBuffer && countingOut != null) {
+                    long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000L;
+                    log.debug("CSV export aborted by client: parquetFile={}, csvBytesSoFar={}, elapsedMs={}",
+                            parquetFile.getFileName(), countingOut.getCount(), elapsedMs);
+                }
+                return;
+            }
+            throw e;
         }
     }
 
@@ -284,12 +302,29 @@ public class ParquetExportService {
 
     private boolean isClientAbort(Throwable error) {
         for (Throwable t = error; t != null; t = t.getCause()) {
-            String msg = (t.getMessage() == null) ? "" : t.getMessage().toLowerCase();
-            if (msg.contains("broken pipe")
-                    || msg.contains("connection reset")
-                    || msg.contains("forcibly closed")
-                    || msg.contains("abort")) {
+            if (t instanceof AbortedException) {
                 return true;
+            }
+            if (AbortedException.isConnectionReset(t)) {
+                return true;
+            }
+            if (t instanceof ClosedChannelException) {
+                return true;
+            }
+            if ("org.apache.catalina.connector.ClientAbortException".equals(t.getClass().getName())) {
+                return true;
+            }
+
+            if (t instanceof IOException) {
+                String msg = (t.getMessage() == null) ? "" : t.getMessage().toLowerCase(Locale.ROOT);
+                if (msg.contains("broken pipe")
+                        || msg.contains("connection reset")
+                        || msg.contains("reset by peer")
+                        || msg.contains("forcibly closed")
+                        || msg.contains("clientabort")
+                        || msg.contains("abort")) {
+                    return true;
+                }
             }
         }
         return false;

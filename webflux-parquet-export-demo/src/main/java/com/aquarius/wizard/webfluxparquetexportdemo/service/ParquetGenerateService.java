@@ -12,10 +12,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.server.ResponseStatusException;
+import reactor.netty.channel.AbortedException;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.nio.channels.ClosedChannelException;
+import java.util.Locale;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
@@ -60,6 +63,11 @@ public class ParquetGenerateService {
                 return;
             }
             throw new UncheckedIOException(e);
+        } catch (RuntimeException e) {
+            if (isClientAbort(e)) {
+                return;
+            }
+            throw e;
         }
     }
 
@@ -70,12 +78,29 @@ public class ParquetGenerateService {
 
     private boolean isClientAbort(Throwable error) {
         for (Throwable t = error; t != null; t = t.getCause()) {
-            String msg = (t.getMessage() == null) ? "" : t.getMessage().toLowerCase();
-            if (msg.contains("broken pipe")
-                    || msg.contains("connection reset")
-                    || msg.contains("forcibly closed")
-                    || msg.contains("abort")) {
+            if (t instanceof AbortedException) {
                 return true;
+            }
+            if (AbortedException.isConnectionReset(t)) {
+                return true;
+            }
+            if (t instanceof ClosedChannelException) {
+                return true;
+            }
+            if ("org.apache.catalina.connector.ClientAbortException".equals(t.getClass().getName())) {
+                return true;
+            }
+
+            if (t instanceof IOException) {
+                String msg = (t.getMessage() == null) ? "" : t.getMessage().toLowerCase(Locale.ROOT);
+                if (msg.contains("broken pipe")
+                        || msg.contains("connection reset")
+                        || msg.contains("reset by peer")
+                        || msg.contains("forcibly closed")
+                        || msg.contains("clientabort")
+                        || msg.contains("abort")) {
+                    return true;
+                }
             }
         }
         return false;
