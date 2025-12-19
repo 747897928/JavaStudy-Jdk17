@@ -4,6 +4,8 @@ import com.aquarius.wizard.webfluxparquetexportdemo.util.Int96Util;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.LogicalTypeAnnotation;
+import org.apache.parquet.schema.LogicalTypeAnnotation.TimeUnit;
+import org.apache.parquet.schema.OriginalType;
 import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.apache.parquet.schema.Type;
@@ -12,14 +14,21 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.Base64;
+import java.util.UUID;
 
 /**
  * Convert a single Parquet cell (physical + logical type) into a value suitable for CSV output.
  * <p>
  * This class is intentionally Parquet-aware. CSV escaping/quoting belongs in {@code CsvUtil};
  * Parquet type interpretation belongs here.
+ * <p>
+ * Note on INT96:
+ * INT96 timestamps are legacy/deprecated in the Parquet spec, but they are still common in the Spark/Hive ecosystem
+ * (e.g. Spark 2.4 and older defaults). This demo keeps INT96 -> Instant formatting for compatibility.
  */
 public final class ParquetToCsvCellValueConverter {
 
@@ -43,10 +52,11 @@ public final class ParquetToCsvCellValueConverter {
         PrimitiveType primitiveType = fieldType.asPrimitiveType();
         PrimitiveTypeName physicalType = primitiveType.getPrimitiveTypeName();
         LogicalTypeAnnotation logicalType = primitiveType.getLogicalTypeAnnotation();
+        OriginalType originalType = primitiveType.getOriginalType();
 
         return switch (physicalType) {
-            case INT32 -> formatInt32(rowGroup.getInteger(fieldIndex, 0), logicalType);
-            case INT64 -> formatInt64(rowGroup.getLong(fieldIndex, 0), logicalType);
+            case INT32 -> formatInt32(rowGroup.getInteger(fieldIndex, 0), logicalType, originalType);
+            case INT64 -> formatInt64(rowGroup.getLong(fieldIndex, 0), logicalType, originalType);
             case FLOAT -> Float.toString(rowGroup.getFloat(fieldIndex, 0));
             case DOUBLE -> Double.toString(rowGroup.getDouble(fieldIndex, 0));
             case BOOLEAN -> Boolean.toString(rowGroup.getBoolean(fieldIndex, 0));
@@ -59,27 +69,17 @@ public final class ParquetToCsvCellValueConverter {
 
             case BINARY, FIXED_LEN_BYTE_ARRAY -> {
                 Binary binaryValue = rowGroup.getBinary(fieldIndex, 0);
+                int fixedLength = (physicalType == PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY) ? primitiveType.getTypeLength() : -1;
 
-                if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
-                    BigInteger unscaled = new BigInteger(binaryValue.getBytes());
-                    yield new BigDecimal(unscaled, decimal.getScale()).toPlainString();
-                }
-
-                if (logicalType instanceof LogicalTypeAnnotation.StringLogicalTypeAnnotation
-                        || logicalType instanceof LogicalTypeAnnotation.EnumLogicalTypeAnnotation
-                        || logicalType instanceof LogicalTypeAnnotation.JsonLogicalTypeAnnotation) {
-                    yield binaryValue.toStringUsingUTF8();
-                }
-
-                // For arbitrary bytes we output Base64 to keep CSV valid UTF-8.
-                yield BASE64.encodeToString(binaryValue.getBytes());
+                Object formatted = formatBinary(binaryValue, logicalType, originalType, fixedLength);
+                yield (formatted == null) ? BASE64.encodeToString(binaryValue.getBytes()) : formatted;
             }
 
             default -> rowGroup.getValueToString(fieldIndex, 0);
         };
     }
 
-    private static Object formatInt32(int value, LogicalTypeAnnotation logicalType) {
+    private static Object formatInt32(int value, LogicalTypeAnnotation logicalType, OriginalType originalType) {
         if (logicalType instanceof LogicalTypeAnnotation.DateLogicalTypeAnnotation) {
             return LocalDate.ofEpochDay(value).toString();
         }
@@ -91,13 +91,38 @@ public final class ParquetToCsvCellValueConverter {
             };
             return LocalTime.ofNanoOfDay(nanos).toString();
         }
+        if (logicalType instanceof LogicalTypeAnnotation.IntLogicalTypeAnnotation intAnnotation) {
+            return formatNarrowInt32(value, intAnnotation.getBitWidth(), intAnnotation.isSigned());
+        }
         if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
             return BigDecimal.valueOf(value, decimal.getScale()).toPlainString();
         }
+
+        if (logicalType == null) {
+            if (originalType == OriginalType.DATE) {
+                return LocalDate.ofEpochDay(value).toString();
+            }
+            if (originalType == OriginalType.TIME_MILLIS) {
+                return LocalTime.ofNanoOfDay((long) value * 1_000_000L).toString();
+            }
+            if (originalType == OriginalType.INT_8) {
+                return Byte.toString((byte) value);
+            }
+            if (originalType == OriginalType.UINT_8) {
+                return Integer.toString(value & 0xFF);
+            }
+            if (originalType == OriginalType.INT_16) {
+                return Short.toString((short) value);
+            }
+            if (originalType == OriginalType.UINT_16) {
+                return Integer.toString(value & 0xFFFF);
+            }
+        }
+
         return Integer.toString(value);
     }
 
-    private static Object formatInt64(long value, LogicalTypeAnnotation logicalType) {
+    private static Object formatInt64(long value, LogicalTypeAnnotation logicalType, OriginalType originalType) {
         if (logicalType instanceof LogicalTypeAnnotation.TimeLogicalTypeAnnotation time) {
             long nanos = switch (time.getUnit()) {
                 case MILLIS -> value * 1_000_000L;
@@ -107,22 +132,107 @@ public final class ParquetToCsvCellValueConverter {
             return LocalTime.ofNanoOfDay(nanos).toString();
         }
         if (logicalType instanceof LogicalTypeAnnotation.TimestampLogicalTypeAnnotation timestamp) {
-            Instant instant = switch (timestamp.getUnit()) {
-                case MILLIS -> Instant.ofEpochMilli(value);
-                case MICROS -> Instant.ofEpochSecond(
-                        Math.floorDiv(value, 1_000_000L),
-                        Math.floorMod(value, 1_000_000L) * 1_000L
-                );
-                case NANOS -> Instant.ofEpochSecond(
-                        Math.floorDiv(value, 1_000_000_000L),
-                        Math.floorMod(value, 1_000_000_000L)
-                );
-            };
-            return instant.toString();
+            // Parquet TIMESTAMP has two semantics:
+            // - isAdjustedToUTC=true  -> represents a point on the global time-line (Instant).
+            // - isAdjustedToUTC=false -> "local" timestamp without time zone; it is NOT a unique Instant.
+            //
+            // For CSV output, we make the distinction explicit:
+            // - adjusted -> Instant ISO-8601 string
+            // - local    -> LocalDateTime ISO-8601 string
+            return timestamp.isAdjustedToUTC()
+                    ? formatTimestampInstant(value, timestamp.getUnit()).toString()
+                    : formatTimestampLocalDateTime(value, timestamp.getUnit()).toString();
         }
         if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
             return BigDecimal.valueOf(value, decimal.getScale()).toPlainString();
         }
+
+        if (logicalType == null) {
+            if (originalType == OriginalType.TIME_MICROS) {
+                return LocalTime.ofNanoOfDay(value * 1_000L).toString();
+            }
+            if (originalType == OriginalType.TIMESTAMP_MILLIS) {
+                return formatTimestampInstant(value, TimeUnit.MILLIS).toString();
+            }
+            if (originalType == OriginalType.TIMESTAMP_MICROS) {
+                return formatTimestampInstant(value, TimeUnit.MICROS).toString();
+            }
+        }
+
         return Long.toString(value);
+    }
+
+    private static Object formatBinary(Binary binaryValue,
+                                       LogicalTypeAnnotation logicalType,
+                                       OriginalType originalType,
+                                       int fixedLength) {
+        if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
+            BigInteger unscaled = new BigInteger(binaryValue.getBytes());
+            return new BigDecimal(unscaled, decimal.getScale()).toPlainString();
+        }
+
+        if (logicalType instanceof LogicalTypeAnnotation.StringLogicalTypeAnnotation
+                || logicalType instanceof LogicalTypeAnnotation.EnumLogicalTypeAnnotation
+                || logicalType instanceof LogicalTypeAnnotation.JsonLogicalTypeAnnotation) {
+            return binaryValue.toStringUsingUTF8();
+        }
+
+        if (logicalType instanceof LogicalTypeAnnotation.UUIDLogicalTypeAnnotation && fixedLength == 16) {
+            return formatUuid(binaryValue.getBytes());
+        }
+
+        if (logicalType == null) {
+            if (originalType == OriginalType.UTF8
+                    || originalType == OriginalType.ENUM
+                    || originalType == OriginalType.JSON) {
+                return binaryValue.toStringUsingUTF8();
+            }
+        }
+
+        return null;
+    }
+
+    private static String formatUuid(byte[] bytes) {
+        if (bytes.length != 16) {
+            return BASE64.encodeToString(bytes);
+        }
+        long mostSignificantBits = 0L;
+        long leastSignificantBits = 0L;
+        for (int i = 0; i < 8; i++) {
+            mostSignificantBits = (mostSignificantBits << 8) | (bytes[i] & 0xFFL);
+        }
+        for (int i = 8; i < 16; i++) {
+            leastSignificantBits = (leastSignificantBits << 8) | (bytes[i] & 0xFFL);
+        }
+        return new UUID(mostSignificantBits, leastSignificantBits).toString();
+    }
+
+    private static Object formatNarrowInt32(int value, int bitWidth, boolean signed) {
+        if (bitWidth == 8) {
+            return signed ? Byte.toString((byte) value) : Integer.toString(value & 0xFF);
+        }
+        if (bitWidth == 16) {
+            return signed ? Short.toString((short) value) : Integer.toString(value & 0xFFFF);
+        }
+        return Integer.toString(value);
+    }
+
+    private static Instant formatTimestampInstant(long value, TimeUnit unit) {
+        return switch (unit) {
+            case MILLIS -> Instant.ofEpochMilli(value);
+            case MICROS -> Instant.ofEpochSecond(
+                    Math.floorDiv(value, 1_000_000L),
+                    Math.floorMod(value, 1_000_000L) * 1_000L
+            );
+            case NANOS -> Instant.ofEpochSecond(
+                    Math.floorDiv(value, 1_000_000_000L),
+                    Math.floorMod(value, 1_000_000_000L)
+            );
+        };
+    }
+
+    private static LocalDateTime formatTimestampLocalDateTime(long value, TimeUnit unit) {
+        Instant asIfUtcInstant = formatTimestampInstant(value, unit);
+        return LocalDateTime.ofInstant(asIfUtcInstant, ZoneOffset.UTC);
     }
 }
