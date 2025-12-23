@@ -5,7 +5,6 @@ import org.apache.parquet.example.data.Group;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.LogicalTypeAnnotation;
 import org.apache.parquet.schema.LogicalTypeAnnotation.TimeUnit;
-import org.apache.parquet.schema.OriginalType;
 import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.apache.parquet.schema.Type;
@@ -34,6 +33,26 @@ public final class ParquetToCsvCellValueConverter {
 
     private static final Base64.Encoder BASE64 = Base64.getEncoder();
 
+    /**
+     * Parquet's legacy ConvertedType/OriginalType is deprecated in parquet-mr but still appears in real-world
+     * Parquet files (Spark/Hive/older writers). We map it to our own small enum so the deprecated type is confined
+     * to one conversion method.
+     */
+    private enum LegacyConvertedType {
+        UTF8,
+        ENUM,
+        JSON,
+        DATE,
+        TIME_MILLIS,
+        TIME_MICROS,
+        TIMESTAMP_MILLIS,
+        TIMESTAMP_MICROS,
+        INT_8,
+        INT_16,
+        UINT_8,
+        UINT_16
+    }
+
     private ParquetToCsvCellValueConverter() {
     }
 
@@ -52,11 +71,11 @@ public final class ParquetToCsvCellValueConverter {
         PrimitiveType primitiveType = fieldType.asPrimitiveType();
         PrimitiveTypeName physicalType = primitiveType.getPrimitiveTypeName();
         LogicalTypeAnnotation logicalType = primitiveType.getLogicalTypeAnnotation();
-        OriginalType originalType = primitiveType.getOriginalType();
+        LegacyConvertedType legacyConvertedType = legacyConvertedTypeOrNull(primitiveType);
 
         return switch (physicalType) {
-            case INT32 -> formatInt32(rowGroup.getInteger(fieldIndex, 0), logicalType, originalType);
-            case INT64 -> formatInt64(rowGroup.getLong(fieldIndex, 0), logicalType, originalType);
+            case INT32 -> formatInt32(rowGroup.getInteger(fieldIndex, 0), logicalType, legacyConvertedType);
+            case INT64 -> formatInt64(rowGroup.getLong(fieldIndex, 0), logicalType, legacyConvertedType);
             case FLOAT -> Float.toString(rowGroup.getFloat(fieldIndex, 0));
             case DOUBLE -> Double.toString(rowGroup.getDouble(fieldIndex, 0));
             case BOOLEAN -> Boolean.toString(rowGroup.getBoolean(fieldIndex, 0));
@@ -71,7 +90,7 @@ public final class ParquetToCsvCellValueConverter {
                 Binary binaryValue = rowGroup.getBinary(fieldIndex, 0);
                 int fixedLength = (physicalType == PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY) ? primitiveType.getTypeLength() : -1;
 
-                Object formatted = formatBinary(binaryValue, logicalType, originalType, fixedLength);
+                Object formatted = formatBinary(binaryValue, logicalType, legacyConvertedType, fixedLength);
                 yield (formatted == null) ? BASE64.encodeToString(binaryValue.getBytes()) : formatted;
             }
 
@@ -79,13 +98,13 @@ public final class ParquetToCsvCellValueConverter {
         };
     }
 
-    private static Object formatInt32(int value, LogicalTypeAnnotation logicalType, OriginalType originalType) {
+    private static Object formatInt32(int value, LogicalTypeAnnotation logicalType, LegacyConvertedType legacyConvertedType) {
         Object formatted = formatInt32ByLogicalType(value, logicalType);
         if (formatted != null) {
             return formatted;
         }
         if (logicalType == null) {
-            Object legacyFormatted = formatInt32ByOriginalType(value, originalType);
+            Object legacyFormatted = formatInt32ByLegacyConvertedType(value, legacyConvertedType);
             if (legacyFormatted != null) {
                 return legacyFormatted;
             }
@@ -109,11 +128,11 @@ public final class ParquetToCsvCellValueConverter {
         return null;
     }
 
-    private static Object formatInt32ByOriginalType(int value, OriginalType originalType) {
-        if (originalType == null) {
+    private static Object formatInt32ByLegacyConvertedType(int value, LegacyConvertedType legacyConvertedType) {
+        if (legacyConvertedType == null) {
             return null;
         }
-        return switch (originalType) {
+        return switch (legacyConvertedType) {
             case DATE -> LocalDate.ofEpochDay(value).toString();
             case TIME_MILLIS -> LocalTime.ofNanoOfDay((long) value * 1_000_000L).toString();
             case INT_8 -> Byte.toString((byte) value);
@@ -132,7 +151,7 @@ public final class ParquetToCsvCellValueConverter {
         };
     }
 
-    private static Object formatInt64(long value, LogicalTypeAnnotation logicalType, OriginalType originalType) {
+    private static Object formatInt64(long value, LogicalTypeAnnotation logicalType, LegacyConvertedType legacyConvertedType) {
         if (logicalType instanceof LogicalTypeAnnotation.TimeLogicalTypeAnnotation time) {
             long nanos = switch (time.getUnit()) {
                 case MILLIS -> value * 1_000_000L;
@@ -158,13 +177,13 @@ public final class ParquetToCsvCellValueConverter {
         }
 
         if (logicalType == null) {
-            if (originalType == OriginalType.TIME_MICROS) {
+            if (legacyConvertedType == LegacyConvertedType.TIME_MICROS) {
                 return LocalTime.ofNanoOfDay(value * 1_000L).toString();
             }
-            if (originalType == OriginalType.TIMESTAMP_MILLIS) {
+            if (legacyConvertedType == LegacyConvertedType.TIMESTAMP_MILLIS) {
                 return formatTimestampInstant(value, TimeUnit.MILLIS).toString();
             }
-            if (originalType == OriginalType.TIMESTAMP_MICROS) {
+            if (legacyConvertedType == LegacyConvertedType.TIMESTAMP_MICROS) {
                 return formatTimestampInstant(value, TimeUnit.MICROS).toString();
             }
         }
@@ -174,7 +193,7 @@ public final class ParquetToCsvCellValueConverter {
 
     private static Object formatBinary(Binary binaryValue,
                                        LogicalTypeAnnotation logicalType,
-                                       OriginalType originalType,
+                                       LegacyConvertedType legacyConvertedType,
                                        int fixedLength) {
         if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
             BigInteger unscaled = new BigInteger(binaryValue.getBytes());
@@ -192,9 +211,9 @@ public final class ParquetToCsvCellValueConverter {
         }
 
         if (logicalType == null) {
-            if (originalType == OriginalType.UTF8
-                    || originalType == OriginalType.ENUM
-                    || originalType == OriginalType.JSON) {
+            if (legacyConvertedType == LegacyConvertedType.UTF8
+                    || legacyConvertedType == LegacyConvertedType.ENUM
+                    || legacyConvertedType == LegacyConvertedType.JSON) {
                 return binaryValue.toStringUsingUTF8();
             }
         }
@@ -244,5 +263,28 @@ public final class ParquetToCsvCellValueConverter {
     private static LocalDateTime formatTimestampLocalDateTime(long value, TimeUnit unit) {
         Instant asIfUtcInstant = formatTimestampInstant(value, unit);
         return LocalDateTime.ofInstant(asIfUtcInstant, ZoneOffset.UTC);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static LegacyConvertedType legacyConvertedTypeOrNull(PrimitiveType primitiveType) {
+        org.apache.parquet.schema.OriginalType originalType = primitiveType.getOriginalType();
+        if (originalType == null) {
+            return null;
+        }
+        return switch (originalType) {
+            case UTF8 -> LegacyConvertedType.UTF8;
+            case ENUM -> LegacyConvertedType.ENUM;
+            case JSON -> LegacyConvertedType.JSON;
+            case DATE -> LegacyConvertedType.DATE;
+            case TIME_MILLIS -> LegacyConvertedType.TIME_MILLIS;
+            case TIME_MICROS -> LegacyConvertedType.TIME_MICROS;
+            case TIMESTAMP_MILLIS -> LegacyConvertedType.TIMESTAMP_MILLIS;
+            case TIMESTAMP_MICROS -> LegacyConvertedType.TIMESTAMP_MICROS;
+            case INT_8 -> LegacyConvertedType.INT_8;
+            case INT_16 -> LegacyConvertedType.INT_16;
+            case UINT_8 -> LegacyConvertedType.UINT_8;
+            case UINT_16 -> LegacyConvertedType.UINT_16;
+            default -> null;
+        };
     }
 }
