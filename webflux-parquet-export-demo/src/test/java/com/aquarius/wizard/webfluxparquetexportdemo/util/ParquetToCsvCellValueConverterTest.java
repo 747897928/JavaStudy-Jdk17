@@ -82,6 +82,36 @@ class ParquetToCsvCellValueConverterTest {
     }
 
     @Test
+    void int32Uint16OriginalTypeIsUnsignedDecimal() {
+        MessageType schema = MessageTypeParser.parseMessageType("""
+                message demo {
+                  optional int32 u (UINT_16);
+                }
+                """);
+        SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+        Group row = factory.newGroup();
+        row.add("u", -1);
+
+        Object cell = ParquetToCsvCellValueConverter.toCsvCellValue(row, schema.getType("u"), 0);
+        assertThat(cell).isEqualTo("65535");
+    }
+
+    @Test
+    void int32TimeMillisOriginalTypeIsLocalTime() {
+        MessageType schema = MessageTypeParser.parseMessageType("""
+                message demo {
+                  optional int32 t (TIME_MILLIS);
+                }
+                """);
+        SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+        Group row = factory.newGroup();
+        row.add("t", 1); // 00:00:00.001
+
+        Object cell = ParquetToCsvCellValueConverter.toCsvCellValue(row, schema.getType("t"), 0);
+        assertThat(cell).isEqualTo("00:00:00.001");
+    }
+
+    @Test
     void timestampLogicalTypesAndUuidAndNarrowIntsRoundTrip() throws Exception {
         MessageType schema = Types.buildMessage()
                 .optional(PrimitiveTypeName.INT64)

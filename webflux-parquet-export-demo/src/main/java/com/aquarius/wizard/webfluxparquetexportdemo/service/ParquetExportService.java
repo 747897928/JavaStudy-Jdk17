@@ -301,31 +301,32 @@ public class ParquetExportService {
     }
 
     private boolean isClientAbort(Throwable error) {
-        for (Throwable t = error; t != null; t = t.getCause()) {
-            if (t instanceof AbortedException) {
+        for (Throwable throwable = error; throwable != null; throwable = throwable.getCause()) {
+            if (isClientAbortThrowable(throwable)) {
                 return true;
             }
-            if (AbortedException.isConnectionReset(t)) {
-                return true;
-            }
-            if (t instanceof ClosedChannelException) {
-                return true;
-            }
-            if ("org.apache.catalina.connector.ClientAbortException".equals(t.getClass().getName())) {
-                return true;
-            }
+        }
+        return false;
+    }
 
-            if (t instanceof IOException) {
-                String msg = (t.getMessage() == null) ? "" : t.getMessage().toLowerCase(Locale.ROOT);
-                if (msg.contains("broken pipe")
-                        || msg.contains("connection reset")
-                        || msg.contains("reset by peer")
-                        || msg.contains("forcibly closed")
-                        || msg.contains("clientabort")
-                        || msg.contains("abort")) {
-                    return true;
-                }
-            }
+    private boolean isClientAbortThrowable(Throwable throwable) {
+        if (throwable instanceof AbortedException) {
+            return true;
+        }
+        if (AbortedException.isConnectionReset(throwable)) {
+            return true;
+        }
+        if (throwable instanceof ClosedChannelException) {
+            return true;
+        }
+        if (throwable instanceof IOException ioException) {
+            String msg = (ioException.getMessage() == null) ? "" : ioException.getMessage().toLowerCase(Locale.ROOT);
+            return msg.contains("broken pipe")
+                    || msg.contains("connection reset")
+                    || msg.contains("reset by peer")
+                    || msg.contains("forcibly closed")
+                    || msg.contains("clientabort")
+                    || msg.contains("abort");
         }
         return false;
     }
