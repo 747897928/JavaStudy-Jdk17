@@ -195,30 +195,44 @@ public final class ParquetToCsvCellValueConverter {
                                        LogicalTypeAnnotation logicalType,
                                        LegacyConvertedType legacyConvertedType,
                                        int fixedLength) {
+        Object formatted = formatBinaryByLogicalType(binaryValue, logicalType, fixedLength);
+        if (formatted != null) {
+            return formatted;
+        }
+        if (logicalType == null) {
+            return formatBinaryByLegacyConvertedType(binaryValue, legacyConvertedType);
+        }
+        return null;
+    }
+
+    private static Object formatBinaryByLogicalType(Binary binaryValue, LogicalTypeAnnotation logicalType, int fixedLength) {
         if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
             BigInteger unscaled = new BigInteger(binaryValue.getBytes());
             return new BigDecimal(unscaled, decimal.getScale()).toPlainString();
         }
-
-        if (logicalType instanceof LogicalTypeAnnotation.StringLogicalTypeAnnotation
-                || logicalType instanceof LogicalTypeAnnotation.EnumLogicalTypeAnnotation
-                || logicalType instanceof LogicalTypeAnnotation.JsonLogicalTypeAnnotation) {
+        if (logicalType instanceof LogicalTypeAnnotation.StringLogicalTypeAnnotation) {
             return binaryValue.toStringUsingUTF8();
         }
-
+        if (logicalType instanceof LogicalTypeAnnotation.EnumLogicalTypeAnnotation) {
+            return binaryValue.toStringUsingUTF8();
+        }
+        if (logicalType instanceof LogicalTypeAnnotation.JsonLogicalTypeAnnotation) {
+            return binaryValue.toStringUsingUTF8();
+        }
         if (logicalType instanceof LogicalTypeAnnotation.UUIDLogicalTypeAnnotation && fixedLength == 16) {
             return formatUuid(binaryValue.getBytes());
         }
-
-        if (logicalType == null) {
-            if (legacyConvertedType == LegacyConvertedType.UTF8
-                    || legacyConvertedType == LegacyConvertedType.ENUM
-                    || legacyConvertedType == LegacyConvertedType.JSON) {
-                return binaryValue.toStringUsingUTF8();
-            }
-        }
-
         return null;
+    }
+
+    private static Object formatBinaryByLegacyConvertedType(Binary binaryValue, LegacyConvertedType legacyConvertedType) {
+        if (legacyConvertedType == null) {
+            return null;
+        }
+        return switch (legacyConvertedType) {
+            case UTF8, ENUM, JSON -> binaryValue.toStringUsingUTF8();
+            default -> null;
+        };
     }
 
     private static String formatUuid(byte[] bytes) {

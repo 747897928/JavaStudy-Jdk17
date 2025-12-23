@@ -20,6 +20,7 @@ import org.apache.parquet.schema.Types;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.time.Instant;
@@ -67,6 +68,36 @@ class ParquetToCsvCellValueConverterTest {
     }
 
     @Test
+    void binaryEnumIsPlainString() {
+        MessageType schema = MessageTypeParser.parseMessageType("""
+                message demo {
+                  optional binary e (ENUM);
+                }
+                """);
+        SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+        Group row = factory.newGroup();
+        row.add("e", Binary.fromString("X"));
+
+        Object cell = ParquetToCsvCellValueConverter.toCsvCellValue(row, schema.getType("e"), 0);
+        assertThat(cell).isEqualTo("X");
+    }
+
+    @Test
+    void binaryDecimalIsPlainNumberString() {
+        MessageType schema = Types.buildMessage()
+                .optional(PrimitiveTypeName.BINARY)
+                .as(LogicalTypeAnnotation.decimalType(2, 9))
+                .named("dec")
+                .named("demo");
+        SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+        Group row = factory.newGroup();
+        row.add("dec", Binary.fromConstantByteArray(BigInteger.valueOf(12345).toByteArray()));
+
+        Object cell = ParquetToCsvCellValueConverter.toCsvCellValue(row, schema.getType("dec"), schema.getFieldIndex("dec"));
+        assertThat(cell).isEqualTo("123.45");
+    }
+
+    @Test
     void int32DateIsIsoDateString() {
         MessageType schema = MessageTypeParser.parseMessageType("""
                 message demo {
@@ -79,6 +110,21 @@ class ParquetToCsvCellValueConverterTest {
 
         Object cell = ParquetToCsvCellValueConverter.toCsvCellValue(row, schema.getType("d"), 0);
         assertThat(cell).isEqualTo("1970-01-01");
+    }
+
+    @Test
+    void int32UnsignedIntLogicalTypeIsUnsignedDecimal() {
+        MessageType schema = Types.buildMessage()
+                .optional(PrimitiveTypeName.INT32)
+                .as(LogicalTypeAnnotation.intType(16, false))
+                .named("u")
+                .named("demo");
+        SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+        Group row = factory.newGroup();
+        row.add("u", -1);
+
+        Object cell = ParquetToCsvCellValueConverter.toCsvCellValue(row, schema.getType("u"), schema.getFieldIndex("u"));
+        assertThat(cell).isEqualTo("65535");
     }
 
     @Test
