@@ -112,6 +112,36 @@ class ParquetToCsvCellValueConverterTest {
     }
 
     @Test
+    void int64TimeMicrosOriginalTypeIsLocalTime() {
+        MessageType schema = MessageTypeParser.parseMessageType("""
+                message demo {
+                  optional int64 t (TIME_MICROS);
+                }
+                """);
+        SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+        Group row = factory.newGroup();
+        row.add("t", 1L); // 00:00:00.000001
+
+        Object cell = ParquetToCsvCellValueConverter.toCsvCellValue(row, schema.getType("t"), 0);
+        assertThat(cell).isEqualTo("00:00:00.000001");
+    }
+
+    @Test
+    void int64TimestampMillisOriginalTypeIsInstantString() {
+        MessageType schema = MessageTypeParser.parseMessageType("""
+                message demo {
+                  optional int64 ts (TIMESTAMP_MILLIS);
+                }
+                """);
+        SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+        Group row = factory.newGroup();
+        row.add("ts", 1000L); // 1970-01-01T00:00:01Z
+
+        Object cell = ParquetToCsvCellValueConverter.toCsvCellValue(row, schema.getType("ts"), 0);
+        assertThat(cell).isEqualTo("1970-01-01T00:00:01Z");
+    }
+
+    @Test
     void timestampLogicalTypesAndUuidAndNarrowIntsRoundTrip() throws Exception {
         MessageType schema = Types.buildMessage()
                 .optional(PrimitiveTypeName.INT64)
