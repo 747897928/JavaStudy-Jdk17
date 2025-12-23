@@ -80,16 +80,25 @@ public final class ParquetToCsvCellValueConverter {
     }
 
     private static Object formatInt32(int value, LogicalTypeAnnotation logicalType, OriginalType originalType) {
+        Object formatted = formatInt32ByLogicalType(value, logicalType);
+        if (formatted != null) {
+            return formatted;
+        }
+        if (logicalType == null) {
+            Object legacyFormatted = formatInt32ByOriginalType(value, originalType);
+            if (legacyFormatted != null) {
+                return legacyFormatted;
+            }
+        }
+        return Integer.toString(value);
+    }
+
+    private static Object formatInt32ByLogicalType(int value, LogicalTypeAnnotation logicalType) {
         if (logicalType instanceof LogicalTypeAnnotation.DateLogicalTypeAnnotation) {
             return LocalDate.ofEpochDay(value).toString();
         }
         if (logicalType instanceof LogicalTypeAnnotation.TimeLogicalTypeAnnotation time) {
-            long nanos = switch (time.getUnit()) {
-                case MILLIS -> (long) value * 1_000_000L;
-                case MICROS -> (long) value * 1_000L;
-                case NANOS -> (long) value;
-            };
-            return LocalTime.ofNanoOfDay(nanos).toString();
+            return LocalTime.ofNanoOfDay(nanosFromTimeInt32(value, time.getUnit())).toString();
         }
         if (logicalType instanceof LogicalTypeAnnotation.IntLogicalTypeAnnotation intAnnotation) {
             return formatNarrowInt32(value, intAnnotation.getBitWidth(), intAnnotation.isSigned());
@@ -97,29 +106,30 @@ public final class ParquetToCsvCellValueConverter {
         if (logicalType instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimal) {
             return BigDecimal.valueOf(value, decimal.getScale()).toPlainString();
         }
+        return null;
+    }
 
-        if (logicalType == null) {
-            if (originalType == OriginalType.DATE) {
-                return LocalDate.ofEpochDay(value).toString();
-            }
-            if (originalType == OriginalType.TIME_MILLIS) {
-                return LocalTime.ofNanoOfDay((long) value * 1_000_000L).toString();
-            }
-            if (originalType == OriginalType.INT_8) {
-                return Byte.toString((byte) value);
-            }
-            if (originalType == OriginalType.UINT_8) {
-                return Integer.toString(value & 0xFF);
-            }
-            if (originalType == OriginalType.INT_16) {
-                return Short.toString((short) value);
-            }
-            if (originalType == OriginalType.UINT_16) {
-                return Integer.toString(value & 0xFFFF);
-            }
+    private static Object formatInt32ByOriginalType(int value, OriginalType originalType) {
+        if (originalType == null) {
+            return null;
         }
+        return switch (originalType) {
+            case DATE -> LocalDate.ofEpochDay(value).toString();
+            case TIME_MILLIS -> LocalTime.ofNanoOfDay((long) value * 1_000_000L).toString();
+            case INT_8 -> Byte.toString((byte) value);
+            case UINT_8 -> Integer.toString(value & 0xFF);
+            case INT_16 -> Short.toString((short) value);
+            case UINT_16 -> Integer.toString(value & 0xFFFF);
+            default -> null;
+        };
+    }
 
-        return Integer.toString(value);
+    private static long nanosFromTimeInt32(int value, TimeUnit unit) {
+        return switch (unit) {
+            case MILLIS -> (long) value * 1_000_000L;
+            case MICROS -> (long) value * 1_000L;
+            case NANOS -> (long) value;
+        };
     }
 
     private static Object formatInt64(long value, LogicalTypeAnnotation logicalType, OriginalType originalType) {

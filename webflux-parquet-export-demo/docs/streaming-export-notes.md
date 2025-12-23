@@ -262,6 +262,8 @@ ParquetReader、ZipOutputStream 都是阻塞 IO/CPU 操作，因此必须在专�
 
 ## 10. 本项目当前实现位置索引
 
+- 给老板/评审的“方案说明”（更偏业务视角）：
+  - `docs/export-solution-for-boss.md`
 - 生成 Parquet（直接下载，不落地）：`src/main/java/.../service/DemoGenerateService.java` + `src/main/java/.../service/ParquetGenerateService.java`
 - 下载接口（模拟 S3/GCS → 本地临时 parquet → 导出）：`src/main/java/.../service/DemoDownloadService.java` + `src/main/java/.../service/ParquetStagingService.java`
 - Controller（尽量薄）：`src/main/java/.../controller/DemoController.java`
