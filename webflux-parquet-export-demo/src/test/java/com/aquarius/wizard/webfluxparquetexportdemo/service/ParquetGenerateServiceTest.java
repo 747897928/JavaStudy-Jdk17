@@ -1,6 +1,7 @@
 package com.aquarius.wizard.webfluxparquetexportdemo.service;
 
 import com.aquarius.wizard.webfluxparquetexportdemo.config.ExportProperties;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DefaultDataBufferFactory;
@@ -20,7 +21,7 @@ class ParquetGenerateServiceTest {
         ExportProperties props = new ExportProperties();
         props.setChunkSize(1024);
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        ParquetGenerateService service = new ParquetGenerateService(props, executor);
+        ParquetGenerateService service = new ParquetGenerateService(props, executor, new SimpleMeterRegistry());
 
         Flux<DataBuffer> flux = Flux.from(service.streamGeneratedParquet(10, DefaultDataBufferFactory.sharedInstance, "x.parquet"));
 

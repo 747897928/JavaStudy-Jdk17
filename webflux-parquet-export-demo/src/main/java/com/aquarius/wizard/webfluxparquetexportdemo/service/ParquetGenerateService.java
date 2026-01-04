@@ -2,7 +2,11 @@ package com.aquarius.wizard.webfluxparquetexportdemo.service;
 
 import com.aquarius.wizard.webfluxparquetexportdemo.config.ExportProperties;
 import com.aquarius.wizard.webfluxparquetexportdemo.demo.DemoParquetGenerator;
+import com.aquarius.wizard.webfluxparquetexportdemo.io.CountingOutputStream;
 import com.aquarius.wizard.webfluxparquetexportdemo.io.OutputStreamOutputFile;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.apache.parquet.io.OutputFile;
 import org.reactivestreams.Publisher;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -33,12 +37,29 @@ public class ParquetGenerateService {
 
     private final ExportProperties props;
     private final ExecutorService exportExecutor;
+    private final MeterRegistry meterRegistry;
     private final DemoParquetGenerator demoParquetGenerator;
+    private final Counter rejectedCounter;
+    private final Counter bytesCounter;
+    private final Timer durationTimer;
 
-    public ParquetGenerateService(ExportProperties props, ExecutorService exportExecutor) {
+    public ParquetGenerateService(ExportProperties props, ExecutorService exportExecutor, MeterRegistry meterRegistry) {
         this.props = props;
         this.exportExecutor = exportExecutor;
+        this.meterRegistry = meterRegistry;
         this.demoParquetGenerator = new DemoParquetGenerator();
+        this.rejectedCounter = Counter.builder("demo.export.rejections")
+                .tag("operation", "generate")
+                .tag("format", "parquet")
+                .register(meterRegistry);
+        this.bytesCounter = Counter.builder("demo.export.bytes")
+                .tag("operation", "generate")
+                .tag("format", "parquet")
+                .register(meterRegistry);
+        this.durationTimer = Timer.builder("demo.export.duration")
+                .tag("operation", "generate")
+                .tag("format", "parquet")
+                .register(meterRegistry);
     }
 
     public Publisher<DataBuffer> streamGeneratedParquet(long rows, DataBufferFactory bufferFactory, String filenameHint) {
@@ -53,11 +74,14 @@ public class ParquetGenerateService {
     }
 
     private void writeParquetTo(OutputStream rawOut, long rows, String filenameHint) {
+        Timer.Sample sample = Timer.start(meterRegistry);
+        CountingOutputStream countingOut = null;
         try {
             OutputStream nonClosing = StreamUtils.nonClosing(rawOut);
-            OutputFile outputFile = new OutputStreamOutputFile(nonClosing, filenameHint);
+            countingOut = new CountingOutputStream(nonClosing);
+            OutputFile outputFile = new OutputStreamOutputFile(countingOut, filenameHint);
             demoParquetGenerator.generateParquetFile(outputFile, rows, new Random(1234567L));
-            nonClosing.flush();
+            countingOut.flush();
         } catch (IOException e) {
             if (isClientAbort(e)) {
                 return;
@@ -68,10 +92,16 @@ public class ParquetGenerateService {
                 return;
             }
             throw e;
+        } finally {
+            if (countingOut != null) {
+                bytesCounter.increment(countingOut.getCount());
+            }
+            sample.stop(durationTimer);
         }
     }
 
     private RuntimeException exportRejected(RejectedExecutionException ex) {
+        rejectedCounter.increment();
         return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Export system is busy (executor rejected the task)", ex);
     }
