@@ -2,6 +2,8 @@ package com.aquarius.wizard.webfluxparquetexportdemo.service;
 
 import com.aquarius.wizard.webfluxparquetexportdemo.demo.DemoParquetGenerator;
 import com.aquarius.wizard.webfluxparquetexportdemo.util.RandomNameGenerator;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -43,10 +45,15 @@ public class ParquetStagingService {
 
     private final Scheduler exportScheduler;
     private final DemoParquetGenerator demoParquetGenerator;
+    private final Counter rejectedCounter;
 
-    public ParquetStagingService(Scheduler exportScheduler) {
+    public ParquetStagingService(Scheduler exportScheduler, MeterRegistry meterRegistry) {
         this.exportScheduler = exportScheduler;
         this.demoParquetGenerator = new DemoParquetGenerator();
+        this.rejectedCounter = Counter.builder("demo.export.rejections")
+                .tag("operation", "stage")
+                .tag("format", "parquet")
+                .register(meterRegistry);
     }
 
     /**
@@ -180,9 +187,11 @@ public class ParquetStagingService {
     private <T> Mono<T> runOnExportScheduler(Callable<T> task) {
         return Mono.fromCallable(task)
                 .subscribeOn(exportScheduler)
-                .onErrorMap(RejectedExecutionException.class, ex ->
-                        new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                                "Export system is busy (executor rejected the task)", ex))
+                .onErrorMap(RejectedExecutionException.class, ex -> {
+                    rejectedCounter.increment();
+                    return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                            "Export system is busy (executor rejected the task)", ex);
+                })
                 .onErrorMap(IOException.class, UncheckedIOException::new);
     }
 }

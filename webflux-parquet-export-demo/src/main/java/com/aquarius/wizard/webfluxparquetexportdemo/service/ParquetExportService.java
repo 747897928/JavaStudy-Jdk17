@@ -5,6 +5,9 @@ import com.aquarius.wizard.webfluxparquetexportdemo.config.ExportProperties;
 import com.aquarius.wizard.webfluxparquetexportdemo.model.FileFormat;
 import com.aquarius.wizard.webfluxparquetexportdemo.parquet.ParquetToCsvCellValueConverter;
 import com.aquarius.wizard.webfluxparquetexportdemo.util.CsvUtil;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;
@@ -24,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.SignalType;
 import reactor.netty.channel.AbortedException;
 
 import java.io.BufferedOutputStream;
@@ -34,6 +38,8 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.channels.ClosedChannelException;
 import java.util.Locale;
+import java.util.Map;
+import java.util.EnumMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -72,10 +78,34 @@ public class ParquetExportService {
 
     private final ExportProperties props;
     private final ExecutorService exportExecutor;
+    private final MeterRegistry meterRegistry;
+    private final Map<FileFormat, Counter> bytesCounters = new EnumMap<>(FileFormat.class);
+    private final Map<FileFormat, Timer> durationTimers = new EnumMap<>(FileFormat.class);
+    private final Map<FileFormat, Counter> rejectedCounters = new EnumMap<>(FileFormat.class);
 
-    public ParquetExportService(ExportProperties props, ExecutorService exportExecutor) {
+    public ParquetExportService(ExportProperties props, ExecutorService exportExecutor, MeterRegistry meterRegistry) {
         this.props = props;
         this.exportExecutor = exportExecutor;
+        this.meterRegistry = meterRegistry;
+        initializeMetrics();
+    }
+
+    private void initializeMetrics() {
+        for (FileFormat format : FileFormat.values()) {
+            String formatTag = format.name().toLowerCase(Locale.ROOT);
+            bytesCounters.put(format, Counter.builder("demo.export.bytes")
+                    .tag("operation", "export")
+                    .tag("format", formatTag)
+                    .register(meterRegistry));
+            durationTimers.put(format, Timer.builder("demo.export.duration")
+                    .tag("operation", "export")
+                    .tag("format", formatTag)
+                    .register(meterRegistry));
+            rejectedCounters.put(format, Counter.builder("demo.export.rejections")
+                    .tag("operation", "export")
+                    .tag("format", formatTag)
+                    .register(meterRegistry));
+        }
     }
 
     /**
@@ -125,7 +155,7 @@ public class ParquetExportService {
                                                                  DataBufferFactory bufferFactory,
                                                                  String zipEntryName) {
         return switch (format) {
-            case PARQUET -> DataBufferUtils.read(parquetFile, bufferFactory, props.getChunkSize());
+            case PARQUET -> streamParquetWithMetrics(parquetFile, bufferFactory);
             // CSV/ZIP are generated on-the-fly without creating a full file in memory.
             case CSV -> Flux
                     .from(DataBufferUtils.outputStreamPublisher(
@@ -134,7 +164,7 @@ public class ParquetExportService {
                             exportExecutor,
                             props.getChunkSize()
                     ))
-                    .onErrorMap(RejectedExecutionException.class, this::exportRejected);
+                    .onErrorMap(RejectedExecutionException.class, ex -> exportRejected(FileFormat.CSV, ex));
             case ZIP -> Flux
                 .from(DataBufferUtils.outputStreamPublisher(
                         os -> writeZipCsvTo(os, parquetFile, zipEntryName),
@@ -142,16 +172,22 @@ public class ParquetExportService {
                         exportExecutor,
                         props.getChunkSize()
                 ))
-                .onErrorMap(RejectedExecutionException.class, this::exportRejected);
+                .onErrorMap(RejectedExecutionException.class, ex -> exportRejected(FileFormat.ZIP, ex));
         };
     }
 
-    private RuntimeException exportRejected(RejectedExecutionException ex) {
+    private RuntimeException exportRejected(FileFormat format, RejectedExecutionException ex) {
+        Counter counter = rejectedCounters.get(format);
+        if (counter != null) {
+            counter.increment();
+        }
         return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Export system is busy (executor rejected the task)", ex);
     }
 
     private void writeZipCsvTo(OutputStream rawOut, java.nio.file.Path parquetFile, String zipEntryName) {
+        Timer.Sample sample = Timer.start(meterRegistry);
+        CountingOutputStream countingZip = null;
         try {
             // Important: the OutputStream provided by outputStreamPublisher is owned by Spring.
             // We must NOT close it ourselves (otherwise the HTTP response breaks).
@@ -172,7 +208,7 @@ public class ParquetExportService {
 
                 // We write CSV bytes directly into the ZIP entry stream.
                 // The CSV byte encoding is controlled by CSV_CHARSET when we convert String -> bytes.
-                CountingOutputStream countingZip = new CountingOutputStream(zos);
+                countingZip = new CountingOutputStream(zos);
                 writeCsvTo(countingZip, parquetFile, props.isZipFlushHeader(), props.getZipFlushEveryBytes(), false);
                 zos.closeEntry();
 
@@ -190,6 +226,11 @@ public class ParquetExportService {
                 return;
             }
             throw e;
+        } finally {
+            if (countingZip != null) {
+                bytesCounters.get(FileFormat.ZIP).increment(countingZip.getCount());
+            }
+            sample.stop(durationTimers.get(FileFormat.ZIP));
         }
     }
 
@@ -217,6 +258,7 @@ public class ParquetExportService {
                             boolean wrapPlainCsvBuffer) {
         long flushThresholdBytes = Math.max(0, flushEveryBytes);
         long startedAtNanos = System.nanoTime();
+        Timer.Sample sample = Timer.start(meterRegistry);
         CountingOutputStream countingOut = null;
 
         try {
@@ -256,6 +298,11 @@ public class ParquetExportService {
                 return;
             }
             throw e;
+        } finally {
+            if (countingOut != null) {
+                bytesCounters.get(FileFormat.CSV).increment(countingOut.getCount());
+            }
+            sample.stop(durationTimers.get(FileFormat.CSV));
         }
     }
 
@@ -298,6 +345,20 @@ public class ParquetExportService {
         try (ParquetFileReader pfr = ParquetFileReader.open(HadoopInputFile.fromPath(hPath, conf))) {
             return pfr.getFileMetaData().getSchema();
         }
+    }
+
+    private Publisher<DataBuffer> streamParquetWithMetrics(java.nio.file.Path parquetFile, DataBufferFactory bufferFactory) {
+        Timer.Sample sample = Timer.start(meterRegistry);
+        java.util.concurrent.atomic.AtomicLong totalBytes = new java.util.concurrent.atomic.AtomicLong();
+
+        return DataBufferUtils.read(parquetFile, bufferFactory, props.getChunkSize())
+                .doOnNext(buf -> totalBytes.addAndGet(buf.readableByteCount()))
+                .doFinally(signalType -> {
+                    if (signalType != SignalType.CANCEL) {
+                        bytesCounters.get(FileFormat.PARQUET).increment(totalBytes.get());
+                    }
+                    sample.stop(durationTimers.get(FileFormat.PARQUET));
+                });
     }
 
     private boolean isClientAbort(Throwable error) {

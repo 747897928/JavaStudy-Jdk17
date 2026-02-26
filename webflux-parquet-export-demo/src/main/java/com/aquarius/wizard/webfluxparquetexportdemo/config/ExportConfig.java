@@ -1,5 +1,7 @@
 package com.aquarius.wizard.webfluxparquetexportdemo.config;
 
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,12 +25,12 @@ public class ExportConfig {
      * The queue is bounded to avoid unbounded memory growth when too many export requests arrive.
      */
     @Bean(destroyMethod = "shutdown")
-    public ExecutorService exportExecutor(ExportProperties props) {
+    public ExecutorService exportExecutor(ExportProperties props, MeterRegistry meterRegistry) {
         ExportExecutorProperties cfg = props.getExecutorProperties();
         int poolSize = Math.max(1, cfg.getPoolSize());
         int queueCapacity = Math.max(1, cfg.getQueueCapacity());
 
-        return new ThreadPoolExecutor(
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
                 poolSize,
                 poolSize,
                 Math.max(0L, cfg.getKeepAlive().toMillis()),
@@ -49,6 +51,8 @@ public class ExportConfig {
                 // Reject instead and let the request fail fast (caller can retry later).
                 new ThreadPoolExecutor.AbortPolicy()
         );
+        registerExportExecutorGauges(executor, meterRegistry);
+        return executor;
     }
 
     /**
@@ -59,5 +63,20 @@ public class ExportConfig {
     @Bean(destroyMethod = "dispose")
     public Scheduler exportScheduler(ExecutorService exportExecutor) {
         return Schedulers.fromExecutorService(exportExecutor);
+    }
+
+    private void registerExportExecutorGauges(ThreadPoolExecutor executor, MeterRegistry meterRegistry) {
+        Gauge.builder("demo.export.executor.active", executor, ThreadPoolExecutor::getActiveCount)
+                .description("Active threads in the bounded export executor")
+                .register(meterRegistry);
+        Gauge.builder("demo.export.executor.pool.size", executor, ThreadPoolExecutor::getPoolSize)
+                .description("Current pool size of the export executor")
+                .register(meterRegistry);
+        Gauge.builder("demo.export.executor.queue.size", executor.getQueue(), queue -> (double) queue.size())
+                .description("Queue size of the export executor")
+                .register(meterRegistry);
+        Gauge.builder("demo.export.executor.queue.remaining", executor.getQueue(), queue -> (double) queue.remainingCapacity())
+                .description("Remaining queue capacity of the export executor")
+                .register(meterRegistry);
     }
 }
