@@ -1,10 +1,7 @@
 {
   "urls": [
-    "https://www.bilibili.com/video/BV1SCzwYfEYm/",
-    "https://www.bilibili.com/video/BV1Li42127Kd/",
-    "https://www.bilibili.com/video/BV1cZ421K7X5/",
-    "https://www.bilibili.com/video/BV1df421D72S/",
-    "https://www.bilibili.com/video/BV1GHfzBmEf8/"
+    "https://www.bilibili.com/video/BV1DNAhzcEnt/",
+    "https://www.bilibili.com/video/BV13YfCBdEM9/"
   ],
   "outDir": "./output",
   "lang": "zh",
