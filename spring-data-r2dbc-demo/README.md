@@ -154,6 +154,7 @@ curl http://localhost:8083/api/topology
 
 - [学习笔记](./docs/learning-notes.md)
 - [PostgreSQL 本地安装与主从演示](./docs/postgres-local-setup.md)
+- [模块总览与交接说明](./docs/module-overview.md)
 
 ## 简历写法示例
 
