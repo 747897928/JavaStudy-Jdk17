@@ -8,6 +8,14 @@ import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 
+/**
+ * 数据库配置项。
+ * <p>
+ * 学习时重点看：
+ * <p>
+ * - writer-url / reader-url 如何区分读写职责
+ * - pool 里的生命周期参数如何影响主从切换后的连接刷新速度
+ */
 @Validated
 @ConfigurationProperties(prefix = "demo.database")
 public class DemoDatabaseProperties {
@@ -77,6 +85,11 @@ public class DemoDatabaseProperties {
         this.pool = pool;
     }
 
+    /**
+     * R2DBC 连接池参数。
+     * <p>
+     * 这些参数不只是性能调优项，在主从切换场景下也影响旧连接被淘汰的速度。
+     */
     public static class Pool {
 
         @Min(0)

@@ -9,6 +9,12 @@ import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
 
+/**
+ * 模拟下游风控/运费服务客户端。
+ * <p>
+ * 这个类存在的目的不是业务复杂度，而是明确演示：
+ * WebFlux 项目里下游 HTTP 调用也应该尽量使用 {@link WebClient} 这类非阻塞客户端。
+ */
 @Component
 public class PartnerRiskClient {
 
@@ -18,6 +24,9 @@ public class PartnerRiskClient {
         this.partnerWebClient = partnerWebClient;
     }
 
+    /**
+     * 调用下游接口，返回订单风控等级和运费决策。
+     */
     public Mono<PartnerRiskDecision> evaluate(String customerTier, BigDecimal orderAmount) {
         return partnerWebClient.get()
                 .uri(uriBuilder -> uriBuilder

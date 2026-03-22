@@ -13,9 +13,15 @@ import reactor.core.publisher.Mono;
 import java.time.Instant;
 import java.util.stream.Collectors;
 
+/**
+ * WebFlux 全局异常处理器。
+ */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    /**
+     * 处理请求参数校验失败。
+     */
     @ExceptionHandler(WebExchangeBindException.class)
     public Mono<ResponseEntity<ErrorResponse>> handleBindException(
             WebExchangeBindException ex,
@@ -35,6 +41,9 @@ public class GlobalExceptionHandler {
         return Mono.just(ResponseEntity.badRequest().body(body));
     }
 
+    /**
+     * 处理显式抛出的状态码异常。
+     */
     @ExceptionHandler(ResponseStatusException.class)
     public Mono<ResponseEntity<ErrorResponse>> handleResponseStatusException(
             ResponseStatusException ex,

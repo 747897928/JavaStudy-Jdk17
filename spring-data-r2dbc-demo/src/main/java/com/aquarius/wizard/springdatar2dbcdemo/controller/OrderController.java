@@ -20,6 +20,12 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+/**
+ * 订单接口。
+ * <p>
+ * - 创建接口走写链路
+ * - 查询接口走读链路
+ */
 @Validated
 @RestController
 @RequestMapping("/api/orders")
@@ -33,12 +39,18 @@ public class OrderController {
         this.orderQueryService = orderQueryService;
     }
 
+    /**
+     * 创建订单，返回写入结果。
+     */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Mono<OrderResponse> create(@Valid @RequestBody CreateOrderRequest request) {
         return orderCommandService.createOrder(request);
     }
 
+    /**
+     * 列出订单，默认最多返回 10 条。
+     */
     @GetMapping
     public Flux<OrderResponse> list(
             @RequestParam(defaultValue = "10")
@@ -49,6 +61,9 @@ public class OrderController {
         return orderQueryService.listOrders(limit);
     }
 
+    /**
+     * 按订单号查询明细。
+     */
     @GetMapping("/{orderNo}")
     public Mono<OrderResponse> detail(@PathVariable String orderNo) {
         return orderQueryService.getOrder(orderNo);

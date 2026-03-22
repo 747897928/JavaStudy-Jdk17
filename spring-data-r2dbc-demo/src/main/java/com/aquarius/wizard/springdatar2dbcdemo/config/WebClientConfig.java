@@ -9,9 +9,17 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.resources.ConnectionProvider;
 
+/**
+ * 下游 HTTP 客户端配置。
+ * <p>
+ * 这里使用 Reactor Netty + WebClient，避免在 WebFlux 中退回阻塞式 HTTP 客户端。
+ */
 @Configuration(proxyBeanMethods = false)
 public class WebClientConfig {
 
+    /**
+     * 用于访问模拟下游服务的响应式客户端。
+     */
     @Bean
     public WebClient partnerWebClient(PartnerClientProperties properties) {
         ConnectionProvider connectionProvider = ConnectionProvider.builder("partner-http")

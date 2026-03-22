@@ -6,6 +6,9 @@ import org.springframework.data.relational.core.mapping.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
 
+/**
+ * 订单表实体。
+ */
 @Table("purchase_order")
 public class PurchaseOrderEntity {
 

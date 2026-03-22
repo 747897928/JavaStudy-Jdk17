@@ -13,6 +13,7 @@ management:
 
 demo:
   database:
+    # 单机模式：读写都指向同一个 PostgreSQL。
     writer-url: r2dbc:postgresql://localhost:5432/reactive_order_demo
     reader-url: r2dbc:postgresql://localhost:5432/reactive_order_demo
     username: demo
@@ -21,13 +22,18 @@ demo:
     pool:
       initial-size: 2
       max-size: 20
+      # 获取连接失败时的重试次数。主从切换瞬间短暂抖动时，这个值能提供一点缓冲。
       acquire-retry: 3
+      # 空闲连接最多保留多久。
       max-idle-time: 30s
+      # 单个物理连接最多存活多久。这个值越短，旧角色连接被自然淘汰越快。
       max-life-time: 2m
+      # 后台多久扫描一次过期连接。
       background-eviction-interval: 15s
       max-acquire-time: 10s
       max-create-connection-time: 5s
       max-validation-time: 5s
+      # writer 连接每次借出时都检查“自己是不是仍然连在主库”。
       validate-writer-role-on-acquire: true
       validation-query: SELECT 1
   partner:
@@ -45,7 +51,8 @@ spring:
 
 demo:
   database:
-    # The driver re-evaluates host roles when it needs a new physical connection.
-    # The pool-side role check prevents stale writer connections from staying on the old primary after switchover.
+    # HA 模式：
+    # 1. 驱动在“新建物理连接”时根据 targetServerType 重新选主/选从。
+    # 2. 连接池侧的角色校验负责淘汰切换前缓存的旧 writer 连接。
     writer-url: r2dbc:postgresql:failover://localhost:5432,localhost:5433/reactive_order_demo?targetServerType=PRIMARY
     reader-url: r2dbc:postgresql:failover://localhost:5432,localhost:5433/reactive_order_demo?targetServerType=PREFER_SECONDARY

@@ -7,6 +7,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
+/**
+ * 拓扑探针接口。
+ * <p>
+ * 学习主从切换时，优先看这个接口返回，再去看日志。
+ */
 @RestController
 @RequestMapping("/api/topology")
 public class DatabaseTopologyController {
@@ -17,6 +22,9 @@ public class DatabaseTopologyController {
         this.databaseTopologyService = databaseTopologyService;
     }
 
+    /**
+     * 返回当前 writer / reader 实际连接到的数据库节点信息。
+     */
     @GetMapping
     public Mono<TopologySummaryResponse> inspect() {
         return databaseTopologyService.inspect();

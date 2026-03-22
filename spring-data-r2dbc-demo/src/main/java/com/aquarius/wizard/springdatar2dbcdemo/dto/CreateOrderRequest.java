@@ -6,6 +6,9 @@ import jakarta.validation.constraints.NotBlank;
 
 import java.math.BigDecimal;
 
+/**
+ * 创建订单请求。
+ */
 public record CreateOrderRequest(
         @NotBlank(message = "customerName must not be blank")
         String customerName,

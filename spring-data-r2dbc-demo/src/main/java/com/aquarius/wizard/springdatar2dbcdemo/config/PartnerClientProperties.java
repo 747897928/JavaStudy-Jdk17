@@ -7,6 +7,9 @@ import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 
+/**
+ * 下游 WebClient 配置项。
+ */
 @Validated
 @ConfigurationProperties(prefix = "demo.partner")
 public class PartnerClientProperties {

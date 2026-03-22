@@ -19,9 +19,20 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.UUID;
 
+/**
+ * 订单写服务。
+ * <p>
+ * 这条链路演示的是“完整响应式写流程”：
+ * <p>
+ * 1. Controller 收到请求后不阻塞线程
+ * 2. 先用 {@link PartnerRiskClient} 发起非阻塞下游 HTTP 调用
+ * 3. 下游返回后组装订单实体
+ * 4. 再通过 R2DBC 写入 PostgreSQL
+ */
 @Service
 public class OrderCommandService {
 
+    private static final String ORDER_NO_PREFIX = "PO-";
     private static final DateTimeFormatter ORDER_NO_TIME_FORMATTER =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneOffset.UTC);
 
@@ -42,6 +53,11 @@ public class OrderCommandService {
         this.writerTransactionalOperator = writerTransactionalOperator;
     }
 
+    /**
+     * 创建订单。
+     * <p>
+     * 注意这里没有任何 {@code block()}，整个流程都是 Mono 链式拼接。
+     */
     public Mono<OrderResponse> createOrder(CreateOrderRequest request) {
         return Mono.defer(() -> {
                     BigDecimal normalizedUnitPrice = request.unitPrice().setScale(2, RoundingMode.HALF_UP);
@@ -49,6 +65,7 @@ public class OrderCommandService {
                             .multiply(BigDecimal.valueOf(request.quantity()))
                             .setScale(2, RoundingMode.HALF_UP);
 
+                    // 先调用下游风控/运费服务，再把结果拼回订单实体。
                     return partnerRiskClient.evaluate(request.customerTier(), orderAmount)
                             .map(decision -> buildEntity(request, normalizedUnitPrice, decision));
                 })
@@ -57,6 +74,9 @@ public class OrderCommandService {
                 .as(writerTransactionalOperator::transactional);
     }
 
+    /**
+     * 把请求对象和下游决策结果合并成待落库实体。
+     */
     private PurchaseOrderEntity buildEntity(
             CreateOrderRequest request,
             BigDecimal unitPrice,
@@ -79,9 +99,14 @@ public class OrderCommandService {
         return entity;
     }
 
+    /**
+     * 生成订单号。
+     * <p>
+     * 这里选择“UTC 时间 + 随机串”，方便演示，不追求分布式全局单调有序。
+     */
     private String generateOrderNo() {
         String timestamp = ORDER_NO_TIME_FORMATTER.format(Instant.now());
         String randomPart = UUID.randomUUID().toString().substring(0, 6).toUpperCase(Locale.ROOT);
-        return "PO-" + timestamp + "-" + randomPart;
+        return ORDER_NO_PREFIX + timestamp + "-" + randomPart;
     }
 }

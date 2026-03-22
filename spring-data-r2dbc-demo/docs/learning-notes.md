@@ -164,3 +164,12 @@ Mono.fromCallable(blockingCall)
 - 在响应式链路里混用 JDBC 或 `block()`，本质是把 event-loop 当工作线程用，容易引发吞吐下降、连接池等待放大和超时。
 - PostgreSQL 主从场景下，R2DBC 可以用 failover URL 和 `targetServerType` 做基础的读写分离与故障转移。
 - 读写分离不仅是连接配置问题，还涉及复制延迟导致的读写一致性取舍。
+
+## 9. 外部参考链接
+
+- R2DBC PostgreSQL 多 host / `targetServerType` / failover 说明：
+  https://github.com/pgjdbc/r2dbc-postgresql
+- R2DBC Pool 连接池与生命周期说明：
+  https://github.com/r2dbc/r2dbc-pool
+- Spring Data R2DBC Repository 与多 `R2dbcEntityOperations` 说明：
+  https://docs.spring.io/spring-data/relational/reference/r2dbc/repositories.html

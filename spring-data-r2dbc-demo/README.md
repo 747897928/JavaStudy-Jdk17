@@ -29,6 +29,24 @@ Demo 用的是一个简化的“响应式订单中心”：
 
 订单创建时，会先用 `WebClient` 去调用一个本地模拟的下游风控/运费服务，再把订单写入 PostgreSQL。
 
+## 源码导航
+
+如果你是拿这个模块做学习项目，建议按下面顺序看代码：
+
+- 启动入口：[DemoApplication.java](./src/main/java/com/aquarius/wizard/springdatar2dbcdemo/DemoApplication.java)
+- 数据库与主从切换核心配置：[ReactiveDatabaseConfig.java](./src/main/java/com/aquarius/wizard/springdatar2dbcdemo/config/ReactiveDatabaseConfig.java)
+- 数据库参数与连接池参数：[DemoDatabaseProperties.java](./src/main/java/com/aquarius/wizard/springdatar2dbcdemo/config/DemoDatabaseProperties.java)
+- 写链路：先调下游再写库：[OrderCommandService.java](./src/main/java/com/aquarius/wizard/springdatar2dbcdemo/service/OrderCommandService.java)
+- 读链路：查询默认走 reader：[OrderQueryService.java](./src/main/java/com/aquarius/wizard/springdatar2dbcdemo/service/OrderQueryService.java)
+- 主从拓扑探针：[DatabaseTopologyService.java](./src/main/java/com/aquarius/wizard/springdatar2dbcdemo/service/DatabaseTopologyService.java)
+- 模拟下游 WebClient 调用目标：[PartnerRiskStubController.java](./src/main/java/com/aquarius/wizard/springdatar2dbcdemo/controller/PartnerRiskStubController.java)
+
+主从切换最关键的源码位置：
+
+- 新建物理连接时按主从角色选节点：`writer-url` / `reader-url`
+- 旧 writer 连接借出时做角色校验：`ReactiveDatabaseConfig#ensureWriterConnection`
+- 查看当前连接落点：`DatabaseTopologyService#inspect`
+
 ## 快速启动
 
 ### 1. 单机 PostgreSQL
@@ -125,6 +143,12 @@ curl http://localhost:8083/api/topology
 - 应用层重试
 - 幂等键 / 去重
 - 主从一致性治理
+
+## 参考资料
+
+- R2DBC PostgreSQL 多 host / `targetServerType` / failover 说明：https://github.com/pgjdbc/r2dbc-postgresql
+- R2DBC Pool 连接池与生命周期配置说明：https://github.com/r2dbc/r2dbc-pool
+- Spring Data R2DBC Repository 与多 `R2dbcEntityOperations` 说明：https://docs.spring.io/spring-data/relational/reference/r2dbc/repositories.html
 
 ## 推荐阅读
 

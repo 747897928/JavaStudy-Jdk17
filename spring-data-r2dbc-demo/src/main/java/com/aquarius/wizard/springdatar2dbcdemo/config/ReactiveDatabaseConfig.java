@@ -29,6 +29,15 @@ import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+/**
+ * R2DBC 核心配置。
+ * <p>
+ * 这个类是整个 Demo 最重要的入口之一，学习时建议重点看这里：
+ * <p>
+ * 1. 为什么要拆成 writer / reader 两个 {@link ConnectionFactory}
+ * 2. 为什么只配 failover URL 还不够，还要配连接池角色校验
+ * 3. 主从切换后，应用不重启时，新的连接是如何重新选择节点的
+ */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({DemoDatabaseProperties.class, PartnerClientProperties.class})
 @EnableR2dbcRepositories(
@@ -38,13 +47,30 @@ import reactor.core.publisher.Mono;
 public class ReactiveDatabaseConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ReactiveDatabaseConfig.class);
+    private static final String APPLICATION_NAME_PREFIX = "spring-data-r2dbc-demo-";
+    private static final String READ_ONLY_ON = "on";
+    private static final String INVALID_WRITER_CONNECTION_MESSAGE = "Writer connection no longer points to PRIMARY";
 
+    /**
+     * 用于识别当前连接是否仍然连在可写主库上的 SQL。
+     * <p>
+     * PostgreSQL 中：
+     * <p>
+     * - {@code pg_is_in_recovery() = false} 通常表示当前是主库
+     * - {@code transaction_read_only = off} 表示当前事务不是只读
+     */
     private static final String ROLE_CHECK_SQL = """
             SELECT
                 pg_is_in_recovery() AS in_recovery,
                 current_setting('transaction_read_only') AS transaction_read_only
             """;
 
+    /**
+     * 写连接池。
+     * <p>
+     * 在 HA profile 下，这个连接串会带 {@code targetServerType=PRIMARY}，
+     * 表示驱动在新建物理连接时应优先连接主库。
+     */
     @Bean
     @Primary
     public ConnectionFactory writerConnectionFactory(DemoDatabaseProperties properties) {
@@ -58,6 +84,12 @@ public class ReactiveDatabaseConfig {
         );
     }
 
+    /**
+     * 读连接池。
+     * <p>
+     * 在 HA profile 下，这个连接串会带 {@code targetServerType=PREFER_SECONDARY}，
+     * 表示驱动在新建物理连接时优先连接从库。
+     */
     @Bean
     public ConnectionFactory readerConnectionFactory(DemoDatabaseProperties properties) {
         return buildPooledConnectionFactory(
@@ -76,6 +108,9 @@ public class ReactiveDatabaseConfig {
         return DatabaseClient.create(writerConnectionFactory);
     }
 
+    /**
+     * 显式暴露读库 {@link DatabaseClient}，方便查询服务和拓扑探针按职责使用。
+     */
     @Bean
     public DatabaseClient readerDatabaseClient(@Qualifier("readerConnectionFactory") ConnectionFactory readerConnectionFactory) {
         return DatabaseClient.create(readerConnectionFactory);
@@ -108,6 +143,7 @@ public class ReactiveDatabaseConfig {
             ConnectionFactory writerConnectionFactory,
             DemoDatabaseProperties properties
     ) {
+        // 只在 writer 上初始化表结构和种子数据，避免 reader 节点执行 DDL/DML。
         ConnectionFactoryInitializer initializer = new ConnectionFactoryInitializer();
         initializer.setConnectionFactory(writerConnectionFactory);
         initializer.setEnabled(properties.isInitializeSchema());
@@ -131,7 +167,7 @@ public class ReactiveDatabaseConfig {
                 .option(ConnectionFactoryOptions.USER, username)
                 .option(ConnectionFactoryOptions.PASSWORD, password);
 
-        optionsBuilder.option(Option.valueOf("applicationName"), "spring-data-r2dbc-demo-" + poolName);
+        optionsBuilder.option(Option.valueOf("applicationName"), APPLICATION_NAME_PREFIX + poolName);
 
         ConnectionFactory delegate = ConnectionFactories.get(optionsBuilder.build());
         ConnectionPoolConfiguration.Builder poolBuilder = ConnectionPoolConfiguration.builder(delegate)
@@ -151,12 +187,23 @@ public class ReactiveDatabaseConfig {
         }
 
         if (connectionPurpose == ConnectionPurpose.WRITER && poolProperties.isValidateWriterRoleOnAcquire()) {
+            // 关键点：
+            // 1. 驱动只会在“新建物理连接”时重新识别 primary / secondary。
+            // 2. 如果连接池里缓存的是切换前的旧 writer 连接，它不会自动重新选主。
+            // 3. 所以 writer 连接每次借出时，都要再校验一次当前节点角色。
             poolBuilder.postAllocate(connection -> ensureWriterConnection(connection, poolName));
         }
 
         return new ConnectionPool(poolBuilder.build());
     }
 
+    /**
+     * Writer 连接借出时的二次校验。
+     * <p>
+     * 如果主从切换已经发生，而连接池里还残留着旧主节点的连接，
+     * 那么这个连接可能已经变成只读或 standby。
+     * 一旦检测到这种情况，就立刻让连接获取失败，连接池会丢弃该连接并重建。
+     */
     private Mono<Void> ensureWriterConnection(Connection connection, String poolName) {
         return Flux.from(connection.createStatement(ROLE_CHECK_SQL).execute())
                 .flatMap(result -> result.map((row, metadata) -> new ServerRoleState(
@@ -168,21 +215,29 @@ public class ReactiveDatabaseConfig {
                     if (!roleState.isWritablePrimary()) {
                         log.warn("Discarding stale writer connection from pool '{}' because node is no longer primary. inRecovery={}, transactionReadOnly={}",
                                 poolName, roleState.inRecovery(), roleState.transactionReadOnly());
-                        return Mono.error(new IllegalStateException("Writer connection no longer points to PRIMARY"));
+                        return Mono.error(new IllegalStateException(INVALID_WRITER_CONNECTION_MESSAGE));
                     }
                     return Mono.empty();
                 });
     }
 
+    /**
+     * 用于区分当前连接池承担的是“写职责”还是“读职责”。
+     */
     private enum ConnectionPurpose {
         WRITER,
         READER
     }
 
+    /**
+     * PostgreSQL 角色快照。
+     * <p>
+     * 这里只保留判断 writer 是否仍然可写所需的最小字段。
+     */
     private record ServerRoleState(boolean inRecovery, String transactionReadOnly) {
 
         private boolean isWritablePrimary() {
-            return !inRecovery && !"on".equalsIgnoreCase(transactionReadOnly);
+            return !inRecovery && !READ_ONLY_ON.equalsIgnoreCase(transactionReadOnly);
         }
     }
 }
