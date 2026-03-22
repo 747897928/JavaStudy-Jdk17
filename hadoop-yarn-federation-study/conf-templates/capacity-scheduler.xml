@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+    <property>
+        <name>yarn.scheduler.capacity.root.queues</name>
+        <value>default,batch,recovery</value>
+    </property>
+
+    <property>
+        <name>yarn.scheduler.capacity.root.default.capacity</name>
+        <value>20</value>
+    </property>
+
+    <property>
+        <name>yarn.scheduler.capacity.root.batch.capacity</name>
+        <value>70</value>
+    </property>
+
+    <property>
+        <name>yarn.scheduler.capacity.root.recovery.capacity</name>
+        <value>10</value>
+    </property>
+
+    <property>
+        <name>yarn.scheduler.capacity.root.default.maximum-capacity</name>
+        <value>100</value>
+    </property>
+
+    <property>
+        <name>yarn.scheduler.capacity.root.batch.maximum-capacity</name>
+        <value>100</value>
+    </property>
+
+    <property>
+        <name>yarn.scheduler.capacity.root.recovery.maximum-capacity</name>
+        <value>100</value>
+    </property>
+
+    <property>
+        <name>yarn.scheduler.capacity.root.default.user-limit-factor</name>
+        <value>1</value>
+    </property>
+
+    <property>
+        <name>yarn.scheduler.capacity.root.batch.user-limit-factor</name>
+        <value>2</value>
+    </property>
+
+    <property>
+        <name>yarn.scheduler.capacity.root.recovery.user-limit-factor</name>
+        <value>1</value>
+    </property>
+</configuration>

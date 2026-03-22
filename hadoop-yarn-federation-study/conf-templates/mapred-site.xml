@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+    <property>
+        <name>mapreduce.framework.name</name>
+        <value>yarn</value>
+    </property>
+
+    <property>
+        <name>yarn.app.mapreduce.am.env</name>
+        <value>HADOOP_MAPRED_HOME=/opt/hadoop</value>
+    </property>
+
+    <property>
+        <name>mapreduce.map.env</name>
+        <value>HADOOP_MAPRED_HOME=/opt/hadoop</value>
+    </property>
+
+    <property>
+        <name>mapreduce.reduce.env</name>
+        <value>HADOOP_MAPRED_HOME=/opt/hadoop</value>
+    </property>
+
+    <property>
+        <name>mapreduce.jobhistory.address</name>
+        <value>nn1.lab.example.com:10020</value>
+    </property>
+
+    <property>
+        <name>mapreduce.jobhistory.webapp.address</name>
+        <value>nn1.lab.example.com:19888</value>
+    </property>
+
+    <property>
+        <name>mapreduce.jobhistory.principal</name>
+        <value>jhs/_HOST@EXAMPLE.COM</value>
+    </property>
+
+    <property>
+        <name>mapreduce.jobhistory.keytab</name>
+        <value>/etc/security/keytabs/jhs.service.keytab</value>
+    </property>
+
+    <property>
+        <name>mapreduce.jobhistory.http.policy</name>
+        <value>HTTP_ONLY</value>
+    </property>
+
+    <property>
+        <name>mapreduce.jobhistory.webapp.spnego-principal</name>
+        <value>HTTP/_HOST@EXAMPLE.COM</value>
+    </property>
+
+    <property>
+        <name>mapreduce.jobhistory.webapp.spnego-keytab-file</name>
+        <value>/etc/security/keytabs/http.service.keytab</value>
+    </property>
+
+    <property>
+        <name>mapreduce.jobhistory.intermediate-done-dir</name>
+        <value>/mr-history/tmp</value>
+    </property>
+
+    <property>
+        <name>mapreduce.jobhistory.done-dir</name>
+        <value>/mr-history/done</value>
+    </property>
+</configuration>

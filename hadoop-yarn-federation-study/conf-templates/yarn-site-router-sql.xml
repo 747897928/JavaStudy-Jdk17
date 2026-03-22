@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+    <property>
+        <name>yarn.federation.enabled</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.state-store.class</name>
+        <value>org.apache.hadoop.yarn.server.federation.store.impl.SQLFederationStateStore</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.state-store.sql.url</name>
+        <value>jdbc:mysql://mysql-fed.lab.example.com:3306/FederationStateStore</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.state-store.sql.jdbc-class</name>
+        <value>com.mysql.cj.jdbc.MysqlDataSource</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.state-store.sql.username</name>
+        <value>federation</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.state-store.sql.password</name>
+        <value>CHANGE_ME</value>
+    </property>
+
+    <property>
+        <name>yarn.router.clientrm.address</name>
+        <value>yarn-router.company.com:8050</value>
+    </property>
+
+    <property>
+        <name>yarn.router.admin.address</name>
+        <value>yarn-router.company.com:8052</value>
+    </property>
+
+    <property>
+        <name>yarn.router.webapp.address</name>
+        <value>yarn-router.company.com:8089</value>
+    </property>
+
+    <property>
+        <name>yarn.router.kerberos.principal</name>
+        <value>router/_HOST@EXAMPLE.COM</value>
+    </property>
+
+    <property>
+        <name>yarn.router.keytab.file</name>
+        <value>/etc/security/keytabs/router.service.keytab</value>
+    </property>
+</configuration>

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+    <property>
+        <name>yarn.resourcemanager.cluster-id</name>
+        <value>SC-DR</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.ha.enabled</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.ha.rm-ids</name>
+        <value>dr-rm1,dr-rm2</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.hostname.dr-rm1</name>
+        <value>dr-rm1.lab.example.com</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.hostname.dr-rm2</name>
+        <value>dr-rm2.lab.example.com</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.ha.automatic-failover.enabled</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.recovery.enabled</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.store.class</name>
+        <value>org.apache.hadoop.yarn.server.resourcemanager.recovery.ZKRMStateStore</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.zk-address</name>
+        <value>zk1.lab.example.com:2181,zk2.lab.example.com:2181,zk3.lab.example.com:2181</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.enabled</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.state-store.class</name>
+        <value>org.apache.hadoop.yarn.server.federation.store.impl.SQLFederationStateStore</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.state-store.sql.url</name>
+        <value>jdbc:mysql://mysql-fed.lab.example.com:3306/FederationStateStore</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.state-store.sql.jdbc-class</name>
+        <value>com.mysql.cj.jdbc.MysqlDataSource</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.state-store.sql.username</name>
+        <value>federation</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.state-store.sql.password</name>
+        <value>CHANGE_ME</value>
+    </property>
+</configuration>

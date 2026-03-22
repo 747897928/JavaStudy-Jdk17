@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+    <property>
+        <name>fs.defaultFS</name>
+        <value>hdfs://nn1.lab.example.com:8020</value>
+    </property>
+
+    <property>
+        <name>hadoop.tmp.dir</name>
+        <value>/data/hadoop/tmp</value>
+    </property>
+
+    <property>
+        <name>hadoop.security.authentication</name>
+        <value>kerberos</value>
+    </property>
+
+    <property>
+        <name>hadoop.security.authorization</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>hadoop.security.auth_to_local</name>
+        <value>
+            RULE:[2:$1/$2@$0]([ndj]n/.*@EXAMPLE\.COM)s/.*/hdfs/
+            RULE:[2:$1/$2@$0]([rn]m/.*@EXAMPLE\.COM)s/.*/yarn/
+            RULE:[2:$1/$2@$0](router/.*@EXAMPLE\.COM)s/.*/yarn/
+            RULE:[2:$1/$2@$0](jhs/.*@EXAMPLE\.COM)s/.*/mapred/
+            DEFAULT
+        </value>
+    </property>
+
+    <property>
+        <name>hadoop.http.authentication.type</name>
+        <value>kerberos</value>
+    </property>
+
+    <property>
+        <name>hadoop.http.authentication.kerberos.principal</name>
+        <value>HTTP/_HOST@EXAMPLE.COM</value>
+    </property>
+
+    <property>
+        <name>hadoop.http.authentication.kerberos.keytab</name>
+        <value>/etc/security/keytabs/http.service.keytab</value>
+    </property>
+
+    <property>
+        <name>hadoop.http.filter.initializers</name>
+        <value>org.apache.hadoop.security.AuthenticationFilterInitializer</value>
+    </property>
+</configuration>

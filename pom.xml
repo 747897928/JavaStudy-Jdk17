@@ -15,6 +15,7 @@
         <module>webflux-parquet-export-demo</module>
         <module>spring-data-r2dbc-demo</module>
         <module>bilibili-subtitle-export</module>
+        <module>hadoop-yarn-federation-study</module>
     </modules>
 
     <parent>

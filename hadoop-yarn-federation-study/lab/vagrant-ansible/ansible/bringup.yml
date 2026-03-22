@@ -1,0 +1,206 @@
+---
+- name: Start ZooKeeper on nn1
+  hosts: namenode
+  become: true
+  environment:
+    JAVA_HOME: "{{ java_home }}"
+    PATH: "{{ ansible_env.PATH }}:{{ zookeeper_home }}/bin"
+  tasks:
+    - name: Start ZooKeeper if not running
+      ansible.builtin.shell: |
+        {{ zookeeper_home }}/bin/zkServer.sh status >/dev/null 2>&1 || {{ zookeeper_home }}/bin/zkServer.sh start
+      args:
+        executable: /bin/bash
+      tags: [bringup, zookeeper]
+
+    - name: Wait for ZooKeeper client port
+      ansible.builtin.wait_for:
+        port: 2181
+        timeout: 30
+      tags: [bringup, zookeeper]
+
+- name: Format and start NameNode
+  hosts: namenode
+  become: true
+  environment:
+    JAVA_HOME: "{{ java_home }}"
+    HADOOP_HOME: "{{ hadoop_home }}"
+    HADOOP_CONF_DIR: "{{ hadoop_conf_dir }}"
+    PATH: "{{ ansible_env.PATH }}:{{ hadoop_home }}/bin:{{ hadoop_home }}/sbin"
+  tasks:
+    - name: Format NameNode once
+      ansible.builtin.shell: |
+        kinit -kt /etc/security/keytabs/nn.service.keytab nn/nn1.{{ lab_domain }}@{{ kerberos_realm }}
+        hdfs namenode -format -nonInteractive
+      args:
+        executable: /bin/bash
+        creates: /data/hadoop/dfs/name/current/VERSION
+      become_user: hdfs
+      tags: [bringup, hdfs]
+
+    - name: Start NameNode if not running
+      ansible.builtin.shell: |
+        kinit -kt /etc/security/keytabs/nn.service.keytab nn/nn1.{{ lab_domain }}@{{ kerberos_realm }}
+        jps | grep -q NameNode || hdfs --daemon start namenode
+      args:
+        executable: /bin/bash
+      become_user: hdfs
+      changed_when: false
+      tags: [bringup, hdfs]
+
+    - name: Wait for NameNode RPC port
+      ansible.builtin.wait_for:
+        port: 8020
+        timeout: 60
+      tags: [bringup, hdfs]
+
+- name: Start DataNodes
+  hosts: prod:dr
+  become: true
+  environment:
+    JAVA_HOME: "{{ java_home }}"
+    HADOOP_HOME: "{{ hadoop_home }}"
+    HADOOP_CONF_DIR: "{{ hadoop_conf_dir }}"
+    PATH: "{{ ansible_env.PATH }}:{{ hadoop_home }}/bin:{{ hadoop_home }}/sbin"
+  tasks:
+    - name: Start DataNode if not running
+      ansible.builtin.shell: |
+        kinit -kt /etc/security/keytabs/dn.service.keytab dn/{{ inventory_hostname }}.{{ lab_domain }}@{{ kerberos_realm }}
+        jps | grep -q DataNode || hdfs --daemon start datanode
+      args:
+        executable: /bin/bash
+      become_user: hdfs
+      changed_when: false
+      tags: [bringup, hdfs]
+
+- name: Initialize HDFS directories and start JobHistory
+  hosts: namenode
+  become: true
+  environment:
+    JAVA_HOME: "{{ java_home }}"
+    HADOOP_HOME: "{{ hadoop_home }}"
+    HADOOP_CONF_DIR: "{{ hadoop_conf_dir }}"
+    PATH: "{{ ansible_env.PATH }}:{{ hadoop_home }}/bin:{{ hadoop_home }}/sbin"
+  tasks:
+    - name: Wait for HDFS to leave safemode
+      ansible.builtin.shell: |
+        kinit -kt /etc/security/keytabs/nn.service.keytab nn/nn1.{{ lab_domain }}@{{ kerberos_realm }}
+        hdfs dfsadmin -safemode wait
+      args:
+        executable: /bin/bash
+      become_user: hdfs
+      changed_when: false
+      tags: [bringup, hdfs]
+
+    - name: Create HDFS base directories
+      ansible.builtin.shell: |
+        set -euo pipefail
+        kinit -kt /etc/security/keytabs/nn.service.keytab nn/nn1.{{ lab_domain }}@{{ kerberos_realm }}
+        hdfs dfs -test -d /tmp || hdfs dfs -mkdir -p /tmp
+        hdfs dfs -chmod 1777 /tmp
+        hdfs dfs -test -d /user || hdfs dfs -mkdir -p /user
+        hdfs dfs -chmod 755 /user
+        hdfs dfs -test -d /tmp/logs || hdfs dfs -mkdir -p /tmp/logs
+        hdfs dfs -chown yarn:hadoop /tmp/logs
+        hdfs dfs -chmod 1777 /tmp/logs
+        hdfs dfs -test -d /mr-history/done || hdfs dfs -mkdir -p /mr-history/done
+        hdfs dfs -chown mapred:hadoop /mr-history/done
+        hdfs dfs -chmod 750 /mr-history/done
+        hdfs dfs -test -d /mr-history/tmp || hdfs dfs -mkdir -p /mr-history/tmp
+        hdfs dfs -chown mapred:hadoop /mr-history/tmp
+        hdfs dfs -chmod 1777 /mr-history/tmp
+        hdfs dfs -test -d /spark-history || hdfs dfs -mkdir -p /spark-history
+        hdfs dfs -chmod 1777 /spark-history
+      args:
+        executable: /bin/bash
+      become_user: hdfs
+      changed_when: false
+      tags: [bringup, hdfs]
+
+    - name: Start JobHistory server if not running
+      ansible.builtin.shell: |
+        kinit -kt /etc/security/keytabs/jhs.service.keytab jhs/nn1.{{ lab_domain }}@{{ kerberos_realm }}
+        jps | grep -q JobHistoryServer || mapred --daemon start historyserver
+      args:
+        executable: /bin/bash
+      become_user: mapred
+      changed_when: false
+      tags: [bringup, mapred]
+
+- name: Start ResourceManagers and NodeManagers
+  hosts: prod:dr
+  become: true
+  environment:
+    JAVA_HOME: "{{ java_home }}"
+    HADOOP_HOME: "{{ hadoop_home }}"
+    HADOOP_CONF_DIR: "{{ hadoop_conf_dir }}"
+    PATH: "{{ ansible_env.PATH }}:{{ hadoop_home }}/bin:{{ hadoop_home }}/sbin"
+  tasks:
+    - name: Start ResourceManager if not running
+      ansible.builtin.shell: |
+        kinit -kt /etc/security/keytabs/rm.service.keytab rm/{{ inventory_hostname }}.{{ lab_domain }}@{{ kerberos_realm }}
+        jps | grep -q ResourceManager || yarn --daemon start resourcemanager
+      args:
+        executable: /bin/bash
+      become_user: yarn
+      changed_when: false
+      tags: [bringup, yarn]
+
+    - name: Start NodeManager if not running
+      ansible.builtin.shell: |
+        kinit -kt /etc/security/keytabs/nm.service.keytab nm/{{ inventory_hostname }}.{{ lab_domain }}@{{ kerberos_realm }}
+        jps | grep -q NodeManager || yarn --daemon start nodemanager
+      args:
+        executable: /bin/bash
+      become_user: yarn
+      changed_when: false
+      tags: [bringup, yarn]
+
+- name: Start Router, import policies and smoke test
+  hosts: router
+  become: true
+  environment:
+    JAVA_HOME: "{{ java_home }}"
+    HADOOP_HOME: "{{ hadoop_home }}"
+    HADOOP_CONF_DIR: "{{ hadoop_conf_dir }}"
+    PATH: "{{ ansible_env.PATH }}:{{ hadoop_home }}/bin:{{ hadoop_home }}/sbin"
+  tasks:
+    - name: Start Router if not running
+      ansible.builtin.shell: |
+        kinit -kt /etc/security/keytabs/router.service.keytab router/router1.{{ lab_domain }}@{{ kerberos_realm }}
+        jps | grep -q Router || yarn --daemon start router
+      args:
+        executable: /bin/bash
+      become_user: yarn
+      changed_when: false
+      tags: [bringup, router]
+
+    - name: Wait for Router client port
+      ansible.builtin.wait_for:
+        port: 8050
+        timeout: 60
+      tags: [bringup, router]
+
+    - name: Import router policy weights
+      ansible.builtin.shell: |
+        kinit -kt /etc/security/keytabs/router.service.keytab router/router1.{{ lab_domain }}@{{ kerberos_realm }}
+        yarn routeradmin -policy --batch-save --format xml -f {{ hadoop_conf_dir }}/federation-weights.xml
+      args:
+        executable: /bin/bash
+      become_user: yarn
+      changed_when: false
+      tags: [bringup, router]
+
+    - name: Run Router smoke test
+      ansible.builtin.shell: |
+        export HADOOP_CONF_DIR={{ router_client_conf_dir }}
+        export ROUTER_HOST=router1.{{ lab_domain }}
+        export TEST_KEYTAB=/etc/security/keytabs/sparkuser.keytab
+        export TEST_PRINCIPAL=sparkuser@{{ kerberos_realm }}
+        export QUEUE={{ smoke_test_queue }}
+        /usr/local/bin/smoke-test-federation.sh
+      args:
+        executable: /bin/bash
+      become_user: yarn
+      changed_when: false
+      tags: [bringup, smoke]

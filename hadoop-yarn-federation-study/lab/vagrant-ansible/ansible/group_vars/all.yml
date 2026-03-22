@@ -1,0 +1,113 @@
+lab_domain: lab.example.com
+kerberos_realm: EXAMPLE.COM
+hadoop_version: 3.4.3
+hadoop_download_url: https://archive.apache.org/dist/hadoop/common/hadoop-3.4.3/hadoop-3.4.3.tar.gz
+hadoop_install_dir: /opt
+hadoop_home: /opt/hadoop
+hadoop_conf_dir: /opt/hadoop/etc/hadoop
+router_client_conf_dir: /opt/hadoop-router-client-conf
+hadoop_group: hadoop
+hadoop_users:
+  - hdfs
+  - yarn
+  - mapred
+java_home: /usr/lib/jvm/java-11-openjdk
+keytab_staging_dir: /var/tmp/hadoop-keytabs
+kdc_master_password: ChangeMeMaster123!
+kadmin_admin_password: ChangeMeAdmin123!
+zookeeper_version: 3.9.3
+zookeeper_download_url: https://archive.apache.org/dist/zookeeper/zookeeper-3.9.3/apache-zookeeper-3.9.3-bin.tar.gz
+zookeeper_home: /opt/zookeeper
+zookeeper_data_dir: /var/lib/zookeeper
+smoke_test_queue: root.batch
+lab_hosts:
+  kdc1:
+    ip: 192.168.56.11
+  nn1:
+    ip: 192.168.56.12
+  prod1:
+    ip: 192.168.56.13
+  dr1:
+    ip: 192.168.56.14
+  router1:
+    ip: 192.168.56.15
+yarn_site_map:
+  nn1: yarn-site-client.xml
+  prod1: yarn-site-prod.xml
+  dr1: yarn-site-dr.xml
+  router1: yarn-site-router.xml
+keytab_map:
+  nn1:
+    - src: nn.service.keytab
+      dest: /etc/security/keytabs/nn.service.keytab
+      owner: hdfs
+      group: hadoop
+      mode: "0400"
+    - src: jhs.service.keytab
+      dest: /etc/security/keytabs/jhs.service.keytab
+      owner: mapred
+      group: hadoop
+      mode: "0400"
+    - src: http.service.keytab
+      dest: /etc/security/keytabs/http.service.keytab
+      owner: hdfs
+      group: hadoop
+      mode: "0400"
+  prod1:
+    - src: dn-prod.service.keytab
+      dest: /etc/security/keytabs/dn.service.keytab
+      owner: hdfs
+      group: hadoop
+      mode: "0400"
+    - src: rm-prod.service.keytab
+      dest: /etc/security/keytabs/rm.service.keytab
+      owner: yarn
+      group: hadoop
+      mode: "0400"
+    - src: nm-prod.service.keytab
+      dest: /etc/security/keytabs/nm.service.keytab
+      owner: yarn
+      group: hadoop
+      mode: "0400"
+    - src: http.service.keytab
+      dest: /etc/security/keytabs/http.service.keytab
+      owner: yarn
+      group: hadoop
+      mode: "0400"
+  dr1:
+    - src: dn-dr.service.keytab
+      dest: /etc/security/keytabs/dn.service.keytab
+      owner: hdfs
+      group: hadoop
+      mode: "0400"
+    - src: rm-dr.service.keytab
+      dest: /etc/security/keytabs/rm.service.keytab
+      owner: yarn
+      group: hadoop
+      mode: "0400"
+    - src: nm-dr.service.keytab
+      dest: /etc/security/keytabs/nm.service.keytab
+      owner: yarn
+      group: hadoop
+      mode: "0400"
+    - src: http.service.keytab
+      dest: /etc/security/keytabs/http.service.keytab
+      owner: yarn
+      group: hadoop
+      mode: "0400"
+  router1:
+    - src: router.service.keytab
+      dest: /etc/security/keytabs/router.service.keytab
+      owner: yarn
+      group: hadoop
+      mode: "0400"
+    - src: http.service.keytab
+      dest: /etc/security/keytabs/http.service.keytab
+      owner: yarn
+      group: hadoop
+      mode: "0400"
+    - src: sparkuser.keytab
+      dest: /etc/security/keytabs/sparkuser.keytab
+      owner: yarn
+      group: hadoop
+      mode: "0400"

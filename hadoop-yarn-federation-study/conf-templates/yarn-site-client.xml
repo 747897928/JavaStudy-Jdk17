@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+    <property>
+        <name>yarn.federation.enabled</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.failover.enabled</name>
+        <value>false</value>
+    </property>
+
+    <property>
+        <name>yarn.federation.non-ha.enabled</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.address</name>
+        <value>router1.lab.example.com:8050</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.admin.address</name>
+        <value>router1.lab.example.com:8052</value>
+    </property>
+
+    <property>
+        <name>yarn.resourcemanager.scheduler.address</name>
+        <value>localhost:8049</value>
+    </property>
+</configuration>

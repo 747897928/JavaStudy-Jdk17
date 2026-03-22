@@ -1,0 +1,389 @@
+---
+- name: Prepare base OS and Hadoop prerequisites
+  hosts: all
+  become: true
+  vars:
+    common_packages:
+      - java-11-openjdk-devel
+      - chrony
+      - krb5-workstation
+      - krb5-libs
+      - curl
+      - wget
+      - tar
+      - gzip
+      - unzip
+      - rsync
+      - which
+      - vim
+  tasks:
+    - name: Install common packages
+      ansible.builtin.dnf:
+        name: "{{ common_packages }}"
+        state: present
+      tags: [base]
+
+    - name: Disable firewalld for the lab
+      ansible.builtin.systemd:
+        name: firewalld
+        state: stopped
+        enabled: false
+      failed_when: false
+      tags: [base]
+
+    - name: Set SELinux to permissive for the lab
+      ansible.builtin.command: setenforce 0
+      failed_when: false
+      changed_when: false
+      tags: [base]
+
+    - name: Persist SELinux permissive mode
+      ansible.builtin.lineinfile:
+        path: /etc/selinux/config
+        regexp: '^SELINUX='
+        line: SELINUX=permissive
+      tags: [base]
+
+    - name: Enable chronyd
+      ansible.builtin.systemd:
+        name: chronyd
+        state: started
+        enabled: true
+      tags: [base]
+
+    - name: Render lab hosts block
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} HADOOP_FED_LAB"
+        block: "{{ lookup('template', 'lab-hosts.block.j2') }}"
+      tags: [base]
+
+    - name: Install Kerberos client config
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../conf-templates/krb5.conf"
+        dest: /etc/krb5.conf
+        mode: "0644"
+      tags: [base, kerberos]
+
+    - name: Create Hadoop group
+      ansible.builtin.group:
+        name: "{{ hadoop_group }}"
+        state: present
+      when: inventory_hostname in groups['hadoop']
+      tags: [base, hadoop]
+
+    - name: Create Hadoop service users
+      ansible.builtin.user:
+        name: "{{ item }}"
+        group: "{{ hadoop_group }}"
+        shell: /bin/bash
+        create_home: false
+      loop: "{{ hadoop_users }}"
+      when: inventory_hostname in groups['hadoop']
+      tags: [base, hadoop]
+
+    - name: Create Hadoop directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /data/hadoop/tmp, owner: root, group: root, mode: "0755" }
+        - { path: /data/hadoop/dfs/name, owner: hdfs, group: "{{ hadoop_group }}", mode: "0700" }
+        - { path: /data/hadoop/dfs/data, owner: hdfs, group: "{{ hadoop_group }}", mode: "0700" }
+        - { path: /data/hadoop/yarn/local, owner: yarn, group: "{{ hadoop_group }}", mode: "0755" }
+        - { path: /data/hadoop/yarn/log, owner: yarn, group: "{{ hadoop_group }}", mode: "0755" }
+        - { path: /etc/security/keytabs, owner: root, group: root, mode: "0700" }
+      when: inventory_hostname in groups['hadoop']
+      tags: [base, hadoop]
+
+    - name: Download Hadoop archive
+      ansible.builtin.get_url:
+        url: "{{ hadoop_download_url }}"
+        dest: "/tmp/hadoop-{{ hadoop_version }}.tar.gz"
+        mode: "0644"
+      when: inventory_hostname in groups['hadoop']
+      tags: [hadoop]
+
+    - name: Extract Hadoop archive
+      ansible.builtin.unarchive:
+        src: "/tmp/hadoop-{{ hadoop_version }}.tar.gz"
+        dest: "{{ hadoop_install_dir }}"
+        remote_src: true
+        creates: "{{ hadoop_install_dir }}/hadoop-{{ hadoop_version }}"
+      when: inventory_hostname in groups['hadoop']
+      tags: [hadoop]
+
+    - name: Link Hadoop home
+      ansible.builtin.file:
+        src: "{{ hadoop_install_dir }}/hadoop-{{ hadoop_version }}"
+        dest: "{{ hadoop_home }}"
+        state: link
+        force: true
+      when: inventory_hostname in groups['hadoop']
+      tags: [hadoop]
+
+    - name: Install Hadoop environment files
+      ansible.builtin.template:
+        src: hadoop-env.sh.j2
+        dest: "{{ item }}"
+        mode: "0644"
+      loop:
+        - "{{ hadoop_conf_dir }}/hadoop-env.sh"
+        - "{{ hadoop_conf_dir }}/yarn-env.sh"
+        - "{{ hadoop_conf_dir }}/mapred-env.sh"
+      when: inventory_hostname in groups['hadoop']
+      tags: [hadoop, configs]
+
+    - name: Install Hadoop profile
+      ansible.builtin.copy:
+        dest: /etc/profile.d/hadoop.sh
+        mode: "0644"
+        content: |
+          export HADOOP_HOME={{ hadoop_home }}
+          export HADOOP_CONF_DIR={{ hadoop_conf_dir }}
+          export JAVA_HOME={{ java_home }}
+          export PATH=$PATH:{{ hadoop_home }}/bin:{{ hadoop_home }}/sbin
+      when: inventory_hostname in groups['hadoop']
+      tags: [hadoop, configs]
+
+- name: Configure and bootstrap the lab KDC
+  hosts: kdc
+  become: true
+  tasks:
+    - name: Install KDC packages
+      ansible.builtin.dnf:
+        name:
+          - krb5-server
+          - krb5-libs
+          - krb5-workstation
+        state: present
+      tags: [kdc]
+
+    - name: Install KDC config files
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "{{ playbook_dir }}/../../../conf-templates/kdc.conf", dest: /var/kerberos/krb5kdc/kdc.conf, mode: "0644" }
+        - { src: "{{ playbook_dir }}/../../../conf-templates/kadm5.acl", dest: /var/kerberos/krb5kdc/kadm5.acl, mode: "0600" }
+      tags: [kdc]
+
+    - name: Initialize Kerberos database once
+      ansible.builtin.command: "kdb5_util create -s -P {{ kdc_master_password }} -r {{ kerberos_realm }}"
+      args:
+        creates: /var/kerberos/krb5kdc/principal
+      tags: [kdc]
+
+    - name: Ensure admin principal exists
+      ansible.builtin.shell: |
+        if ! kadmin.local -q "getprinc admin/admin@{{ kerberos_realm }}" >/dev/null 2>&1; then
+          kadmin.local -q "addprinc -pw {{ kadmin_admin_password }} admin/admin@{{ kerberos_realm }}"
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+      tags: [kdc]
+
+    - name: Start KDC services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - krb5kdc
+        - kadmin
+      tags: [kdc]
+
+    - name: Copy service principal script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../scripts/create-service-principals.sh"
+        dest: /root/create-service-principals.sh
+        mode: "0755"
+      tags: [kdc, keytabs]
+
+    - name: Ensure keytab staging directory exists
+      ansible.builtin.file:
+        path: "{{ keytab_staging_dir }}"
+        state: directory
+        mode: "0700"
+      tags: [kdc, keytabs]
+
+    - name: Generate service principals and keytabs
+      ansible.builtin.shell: "REALM={{ kerberos_realm }} KEYTAB_DIR={{ keytab_staging_dir }} /root/create-service-principals.sh"
+      args:
+        executable: /bin/bash
+      tags: [kdc, keytabs]
+
+    - name: Fetch generated keytabs to controller
+      ansible.builtin.fetch:
+        src: "{{ keytab_staging_dir }}/{{ item }}"
+        dest: "{{ playbook_dir }}/artifacts/keytabs/"
+        flat: true
+      loop:
+        - nn.service.keytab
+        - dn-prod.service.keytab
+        - dn-dr.service.keytab
+        - rm-prod.service.keytab
+        - rm-dr.service.keytab
+        - nm-prod.service.keytab
+        - nm-dr.service.keytab
+        - router.service.keytab
+        - jhs.service.keytab
+        - http.service.keytab
+        - sparkuser.keytab
+      tags: [kdc, keytabs]
+
+- name: Install ZooKeeper on nn1 for federation state store
+  hosts: namenode
+  become: true
+  tasks:
+    - name: Download ZooKeeper archive
+      ansible.builtin.get_url:
+        url: "{{ zookeeper_download_url }}"
+        dest: "/tmp/apache-zookeeper-{{ zookeeper_version }}-bin.tar.gz"
+        mode: "0644"
+      tags: [zookeeper]
+
+    - name: Extract ZooKeeper archive
+      ansible.builtin.unarchive:
+        src: "/tmp/apache-zookeeper-{{ zookeeper_version }}-bin.tar.gz"
+        dest: /opt
+        remote_src: true
+        creates: "/opt/apache-zookeeper-{{ zookeeper_version }}-bin"
+      tags: [zookeeper]
+
+    - name: Link ZooKeeper home
+      ansible.builtin.file:
+        src: "/opt/apache-zookeeper-{{ zookeeper_version }}-bin"
+        dest: "{{ zookeeper_home }}"
+        state: link
+        force: true
+      tags: [zookeeper]
+
+    - name: Create ZooKeeper directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - "{{ zookeeper_data_dir }}"
+        - "{{ zookeeper_home }}/conf"
+      tags: [zookeeper]
+
+    - name: Render zoo.cfg
+      ansible.builtin.template:
+        src: zoo.cfg.j2
+        dest: "{{ zookeeper_home }}/conf/zoo.cfg"
+        mode: "0644"
+      tags: [zookeeper]
+
+- name: Distribute Hadoop configs and keytabs
+  hosts: hadoop
+  become: true
+  tasks:
+    - name: Create Router client config directory
+      ansible.builtin.file:
+        path: "{{ router_client_conf_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: inventory_hostname == 'router1'
+      tags: [configs]
+
+    - name: Copy common Hadoop configs
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ hadoop_conf_dir }}/{{ item | basename }}"
+        mode: "0644"
+      loop:
+        - "{{ playbook_dir }}/../../../conf-templates/core-site.xml"
+        - "{{ playbook_dir }}/../../../conf-templates/hdfs-site.xml"
+        - "{{ playbook_dir }}/../../../conf-templates/mapred-site.xml"
+        - "{{ playbook_dir }}/../../../conf-templates/capacity-scheduler.xml"
+        - "{{ playbook_dir }}/../../../conf-templates/federation-machine-list.txt"
+      tags: [configs]
+
+    - name: Copy router weights to Router host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../conf-templates/federation-weights.xml"
+        dest: "{{ hadoop_conf_dir }}/federation-weights.xml"
+        mode: "0644"
+      when: inventory_hostname == 'router1'
+      tags: [configs]
+
+    - name: Copy common client configs to Router client conf dir
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ router_client_conf_dir }}/{{ item | basename }}"
+        mode: "0644"
+      loop:
+        - "{{ playbook_dir }}/../../../conf-templates/core-site.xml"
+        - "{{ playbook_dir }}/../../../conf-templates/hdfs-site.xml"
+        - "{{ playbook_dir }}/../../../conf-templates/mapred-site.xml"
+      when: inventory_hostname == 'router1'
+      tags: [configs]
+
+    - name: Install host specific yarn-site.xml
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../conf-templates/{{ yarn_site_map[inventory_hostname] }}"
+        dest: "{{ hadoop_conf_dir }}/yarn-site.xml"
+        mode: "0644"
+      when: yarn_site_map[inventory_hostname] is defined
+      tags: [configs]
+
+    - name: Install container-executor config on NodeManager hosts
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../conf-templates/container-executor.cfg"
+        dest: "{{ hadoop_conf_dir }}/container-executor.cfg"
+        owner: root
+        group: "{{ hadoop_group }}"
+        mode: "0400"
+      when: inventory_hostname in ['prod1', 'dr1']
+      tags: [configs]
+
+    - name: Install Router client yarn-site.xml
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../conf-templates/yarn-site-client.xml"
+        dest: "{{ router_client_conf_dir }}/yarn-site.xml"
+        mode: "0644"
+      when: inventory_hostname == 'router1'
+      tags: [configs]
+
+    - name: Install keytabs per host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/artifacts/keytabs/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop: "{{ keytab_map[inventory_hostname] | default([]) }}"
+      tags: [keytabs, configs]
+
+    - name: Fix container-executor permissions
+      ansible.builtin.file:
+        path: "{{ hadoop_home }}/bin/container-executor"
+        owner: root
+        group: "{{ hadoop_group }}"
+        mode: "6050"
+      when: inventory_hostname in ['prod1', 'dr1']
+      tags: [configs]
+
+    - name: Install smoke and submission helper scripts on Router host
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - { src: "{{ playbook_dir }}/../../../scripts/smoke-test-federation.sh", dest: /usr/local/bin/smoke-test-federation.sh }
+        - { src: "{{ playbook_dir }}/../../../scripts/spark-submit-router.sh", dest: /usr/local/bin/spark-submit-router.sh }
+      when: inventory_hostname == 'router1'
+      tags: [configs]

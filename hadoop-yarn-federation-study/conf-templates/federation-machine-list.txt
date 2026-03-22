@@ -1,0 +1,2 @@
+prod1.lab.example.com, SC-PROD, /rack-prod
+dr1.lab.example.com, SC-DR, /rack-dr

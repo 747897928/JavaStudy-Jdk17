@@ -1,0 +1,3 @@
+{% for host, meta in lab_hosts.items() %}
+{{ meta.ip }} {{ host }}.{{ lab_domain }} {{ host }}
+{% endfor %}

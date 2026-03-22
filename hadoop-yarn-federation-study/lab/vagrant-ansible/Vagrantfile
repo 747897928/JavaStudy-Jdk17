@@ -1,0 +1,34 @@
+LAB_BOX = ENV.fetch("LAB_BOX", "generic/rocky9")
+LAB_CPUS = ENV.fetch("LAB_CPUS", "2").to_i
+LAB_MEMORY = ENV.fetch("LAB_MEMORY", "4096").to_i
+
+NODES = [
+  { name: "kdc1", ip: "192.168.56.11", memory: 2048, role: "kdc" },
+  { name: "nn1", ip: "192.168.56.12", memory: LAB_MEMORY, role: "namenode" },
+  { name: "prod1", ip: "192.168.56.13", memory: LAB_MEMORY, role: "prod" },
+  { name: "dr1", ip: "192.168.56.14", memory: LAB_MEMORY, role: "dr" },
+  { name: "router1", ip: "192.168.56.15", memory: 3072, role: "router" }
+].freeze
+
+Vagrant.configure("2") do |config|
+  config.vm.box = LAB_BOX
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  NODES.each do |node|
+    config.vm.define node[:name] do |vm|
+      vm.vm.hostname = "#{node[:name]}.lab.example.com"
+      vm.vm.network "private_network", ip: node[:ip]
+
+      vm.vm.provider "virtualbox" do |vb|
+        vb.name = "hadoop-fed-#{node[:name]}"
+        vb.cpus = LAB_CPUS
+        vb.memory = node[:memory]
+      end
+
+      vm.vm.provider "vmware_desktop" do |v|
+        v.vmx["memsize"] = node[:memory]
+        v.vmx["numvcpus"] = LAB_CPUS
+      end
+    end
+  end
+end
