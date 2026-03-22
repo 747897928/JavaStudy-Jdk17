@@ -16,6 +16,12 @@ import reactor.core.publisher.Mono;
 
 @RestController
 @RequestMapping("/api/spark/jobs")
+/**
+ * 中文说明：
+ * 这里暴露的是最小可用的 Spark 提交网关接口。
+ * 提交接口只负责把任务送到 SparkLauncher，并尽快返回 submissionId / appId；
+ * 状态接口则根据 submissionId 回查网关本地记录，再决定是否去 Yarn 查询。
+ */
 public class SparkJobController {
 
     private final SparkLauncherSubmissionService submissionService;

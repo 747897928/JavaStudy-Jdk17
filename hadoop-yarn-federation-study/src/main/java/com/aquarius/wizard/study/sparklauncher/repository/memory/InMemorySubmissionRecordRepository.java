@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class InMemorySubmissionRecordRepository implements SubmissionRecordRepository {
 
+    // 中文说明：当前项目先用内存仓储做演示，后续接数据库时替换这一层即可。
     private final Map<String, SubmissionRecord> store = new ConcurrentHashMap<>();
 
     @Override

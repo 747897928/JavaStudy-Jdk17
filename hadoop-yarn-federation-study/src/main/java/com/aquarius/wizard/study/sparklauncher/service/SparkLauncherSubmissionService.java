@@ -33,6 +33,11 @@ public class SparkLauncherSubmissionService {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * 中文说明：
+     * 提交动作本质上是阻塞式外部调用，所以放到 boundedElastic 线程池执行。
+     * 这里先记录 submissionId，再尝试拉起 Spark 进程，避免后续排障时查不到提交痕迹。
+     */
     private LaunchSparkJobResponse submitBlocking(LaunchSparkJobRequest request) throws Exception {
         String submissionId = "sub-" + UUID.randomUUID();
         String queue = defaultIfBlank(request.queue(), properties.getDefaultQueue());
@@ -70,6 +75,7 @@ public class SparkLauncherSubmissionService {
         launcherEnv.put("HADOOP_CONF_DIR", properties.getHadoopConfDir().toString());
         launcherEnv.put("YARN_CONF_DIR", properties.getHadoopConfDir().toString());
 
+        // 中文说明：这里把提交网关自身的 Kerberos 和 YARN 客户端配置透传给 SparkLauncher。
         SparkLauncher launcher = new SparkLauncher(launcherEnv)
                 .setSparkHome(properties.getSparkHome().toString())
                 .setMaster("yarn")
@@ -149,6 +155,7 @@ public class SparkLauncherSubmissionService {
 
         @Override
         public void stateChanged(SparkAppHandle handle) {
+            // 中文说明：launcher 状态变化先落库，便于接口查询和故障排查。
             stateRef.set(handle.getState());
             submissionRecordRepository.updateLauncherState(submissionId, handle.getState().name());
             syncAppId(handle);

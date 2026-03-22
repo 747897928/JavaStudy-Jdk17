@@ -13,7 +13,6 @@ public class SparkLauncherProperties {
     private String principal = "sparkuser@EXAMPLE.COM";
     private Path keytab = Path.of("/etc/security/keytabs/sparkuser.keytab");
     private Duration appIdWaitTimeout = Duration.ofSeconds(8);
-    private Duration statusQueryTimeout = Duration.ofSeconds(10);
     private String defaultQueue = "root.batch";
     private String defaultDriverMemory = "2g";
     private String defaultExecutorMemory = "4g";
@@ -21,6 +20,8 @@ public class SparkLauncherProperties {
     private String deployMode = "cluster";
     private String routerBaseUrl;
     private Integer statusClientPoolSize = 4;
+    private Duration statusClientBorrowTimeout = Duration.ofSeconds(3);
+    private Duration statusClientMaxIdleTime = Duration.ofMinutes(5);
 
     public Path getSparkHome() {
         return sparkHome;
@@ -60,14 +61,6 @@ public class SparkLauncherProperties {
 
     public void setAppIdWaitTimeout(Duration appIdWaitTimeout) {
         this.appIdWaitTimeout = appIdWaitTimeout;
-    }
-
-    public Duration getStatusQueryTimeout() {
-        return statusQueryTimeout;
-    }
-
-    public void setStatusQueryTimeout(Duration statusQueryTimeout) {
-        this.statusQueryTimeout = statusQueryTimeout;
     }
 
     public String getDefaultQueue() {
@@ -124,5 +117,21 @@ public class SparkLauncherProperties {
 
     public void setStatusClientPoolSize(Integer statusClientPoolSize) {
         this.statusClientPoolSize = statusClientPoolSize;
+    }
+
+    public Duration getStatusClientBorrowTimeout() {
+        return statusClientBorrowTimeout;
+    }
+
+    public void setStatusClientBorrowTimeout(Duration statusClientBorrowTimeout) {
+        this.statusClientBorrowTimeout = statusClientBorrowTimeout;
+    }
+
+    public Duration getStatusClientMaxIdleTime() {
+        return statusClientMaxIdleTime;
+    }
+
+    public void setStatusClientMaxIdleTime(Duration statusClientMaxIdleTime) {
+        this.statusClientMaxIdleTime = statusClientMaxIdleTime;
     }
 }

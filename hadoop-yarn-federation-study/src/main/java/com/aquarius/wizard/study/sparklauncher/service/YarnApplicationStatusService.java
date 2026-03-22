@@ -34,6 +34,11 @@ public class YarnApplicationStatusService {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * 中文说明：
+     * 状态查询优先根据 submissionId 找到网关自己的提交记录。
+     * 如果 appId 还没拿到，就直接返回网关视角的状态；拿到 appId 后再去 Yarn 查询。
+     */
     private SparkJobStatusResponse queryBlocking(String submissionId) throws Exception {
         SubmissionRecord record = submissionRecordRepository.findRequiredBySubmissionId(submissionId);
         if (record.applicationId() == null || record.applicationId().isBlank()) {
@@ -42,7 +47,7 @@ public class YarnApplicationStatusService {
 
         ApplicationReport report = yarnClientPool.getApplicationReport(
                 record.applicationId(),
-                properties.getStatusQueryTimeout().toMillis()
+                properties.getStatusClientBorrowTimeout().toMillis()
         );
         submissionRecordRepository.updateYarnStatus(
                 submissionId,
@@ -79,6 +84,7 @@ public class YarnApplicationStatusService {
             return configuredBaseUrl + "/cluster/app/" + applicationId;
         }
 
+        // 中文说明：没有显式配置 Router 地址时，再退化为从 hadoop 配置里推断 webapp 地址。
         boolean httpsOnly = "HTTPS_ONLY".equalsIgnoreCase(hadoopConfiguration.get("yarn.http.policy", "HTTP_ONLY"));
         String webappAddress = httpsOnly
                 ? firstNonBlank(
