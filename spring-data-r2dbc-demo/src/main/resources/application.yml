@@ -1,0 +1,51 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: spring-data-r2dbc-demo
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+demo:
+  database:
+    writer-url: r2dbc:postgresql://localhost:5432/reactive_order_demo
+    reader-url: r2dbc:postgresql://localhost:5432/reactive_order_demo
+    username: demo
+    password: demo
+    initialize-schema: true
+    pool:
+      initial-size: 2
+      max-size: 20
+      acquire-retry: 3
+      max-idle-time: 30s
+      max-life-time: 2m
+      background-eviction-interval: 15s
+      max-acquire-time: 10s
+      max-create-connection-time: 5s
+      max-validation-time: 5s
+      validate-writer-role-on-acquire: true
+      validation-query: SELECT 1
+  partner:
+    base-url: http://127.0.0.1:${server.port}
+    timeout: 3s
+    max-connections: 50
+    pending-acquire-max-count: 200
+    pending-acquire-timeout: 15s
+
+---
+spring:
+  config:
+    activate:
+      on-profile: ha
+
+demo:
+  database:
+    # The driver re-evaluates host roles when it needs a new physical connection.
+    # The pool-side role check prevents stale writer connections from staying on the old primary after switchover.
+    writer-url: r2dbc:postgresql:failover://localhost:5432,localhost:5433/reactive_order_demo?targetServerType=PRIMARY
+    reader-url: r2dbc:postgresql:failover://localhost:5432,localhost:5433/reactive_order_demo?targetServerType=PREFER_SECONDARY

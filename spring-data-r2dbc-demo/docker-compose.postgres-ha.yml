@@ -1,0 +1,66 @@
+version: "3.9"
+
+services:
+  pg-0:
+    image: docker.io/soldevelo/postgresql-repmgr:18
+    container_name: spring-data-r2dbc-demo-pg-0
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: postgres
+      POSTGRESQL_USERNAME: demo
+      POSTGRESQL_PASSWORD: demo
+      POSTGRESQL_DATABASE: reactive_order_demo
+      REPMGR_PASSWORD: repmgrpass
+      REPMGR_PRIMARY_HOST: pg-0
+      REPMGR_PRIMARY_PORT: 5432
+      REPMGR_PARTNER_NODES: pg-0:5432,pg-1:5432
+      REPMGR_NODE_NAME: pg-0
+      REPMGR_NODE_NETWORK_NAME: pg-0
+      REPMGR_PORT_NUMBER: 5432
+    volumes:
+      - pg_0_data:/bitnami/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d reactive_order_demo"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - pg-ha
+
+  pg-1:
+    image: docker.io/soldevelo/postgresql-repmgr:18
+    container_name: spring-data-r2dbc-demo-pg-1
+    depends_on:
+      - pg-0
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: postgres
+      POSTGRESQL_USERNAME: demo
+      POSTGRESQL_PASSWORD: demo
+      POSTGRESQL_DATABASE: reactive_order_demo
+      REPMGR_PASSWORD: repmgrpass
+      REPMGR_PRIMARY_HOST: pg-0
+      REPMGR_PRIMARY_PORT: 5432
+      REPMGR_PARTNER_NODES: pg-0:5432,pg-1:5432
+      REPMGR_NODE_NAME: pg-1
+      REPMGR_NODE_NETWORK_NAME: pg-1
+      REPMGR_PORT_NUMBER: 5432
+    volumes:
+      - pg_1_data:/bitnami/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d reactive_order_demo"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - pg-ha
+
+volumes:
+  pg_0_data:
+  pg_1_data:
+
+networks:
+  pg-ha:
+    driver: bridge

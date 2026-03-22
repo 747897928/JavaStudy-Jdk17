@@ -13,6 +13,7 @@
         <module>study-common</module>
         <module>spring-security-study</module>
         <module>webflux-parquet-export-demo</module>
+        <module>spring-data-r2dbc-demo</module>
         <module>bilibili-subtitle-export</module>
     </modules>
 
