@@ -1,4 +1,4 @@
-package com.aquarius.wizard.study.sparklauncher;
+package com.aquarius.wizard.study.sparklauncher.model.request;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -13,6 +13,8 @@ public record LaunchSparkJobRequest(
         String queue,
         String driverMemory,
         String executorMemory,
-        @NotNull Integer executorInstances
+        @NotNull Integer executorInstances,
+        String proxyUser,
+        String businessKey
 ) {
 }

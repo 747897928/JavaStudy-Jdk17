@@ -12,3 +12,11 @@ study:
     principal: ${SPARK_KRB_PRINCIPAL:sparkuser@EXAMPLE.COM}
     keytab: ${SPARK_KRB_KEYTAB:/etc/security/keytabs/sparkuser.keytab}
     app-id-wait-timeout: 8s
+    status-query-timeout: 10s
+    default-queue: ${SPARK_DEFAULT_QUEUE:root.batch}
+    default-driver-memory: ${SPARK_DEFAULT_DRIVER_MEMORY:2g}
+    default-executor-memory: ${SPARK_DEFAULT_EXECUTOR_MEMORY:4g}
+    default-executor-instances: ${SPARK_DEFAULT_EXECUTOR_INSTANCES:2}
+    deploy-mode: ${SPARK_DEPLOY_MODE:cluster}
+    router-base-url: ${YARN_ROUTER_BASE_URL:}
+    status-client-pool-size: ${YARN_STATUS_CLIENT_POOL_SIZE:4}
