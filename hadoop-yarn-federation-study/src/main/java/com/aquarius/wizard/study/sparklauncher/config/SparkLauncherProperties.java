@@ -6,6 +6,10 @@ import java.nio.file.Path;
 import java.time.Duration;
 
 @ConfigurationProperties(prefix = "study.spark")
+/**
+ * Spark 提交网关的配置项。
+ * 统一管理 Spark/YARN/Kerberos 以及状态查询连接池相关参数。
+ */
 public class SparkLauncherProperties {
 
     private Path sparkHome = Path.of("/opt/spark");

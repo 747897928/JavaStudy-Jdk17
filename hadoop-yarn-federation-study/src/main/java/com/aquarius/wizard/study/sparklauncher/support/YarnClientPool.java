@@ -16,7 +16,6 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 中文说明：
  * 这里实现的是一个轻量级 YarnClient 连接池。
  * 目标不是做成通用组件，而是避免状态查询接口在高并发下频繁创建和销毁 YarnClient。
  */
@@ -38,7 +37,6 @@ public class YarnClientPool implements Closeable {
     }
 
     /**
-     * 中文说明：
      * Spring 在应用启动时预热 YarnClient，避免第一批状态查询请求被冷启动拖慢。
      */
     public void start() {
@@ -50,7 +48,6 @@ public class YarnClientPool implements Closeable {
     }
 
     /**
-     * 中文说明：
      * 查询前先从池里借一个客户端。
      * 如果这个客户端已经空闲太久，先回收再重建，避免长时间空闲后的连接老化问题。
      */
@@ -114,7 +111,7 @@ public class YarnClientPool implements Closeable {
             try {
                 client.close();
             } catch (IOException ignored) {
-                // 中文说明：关闭阶段只做资源回收，不再影响主流程。
+                // 关闭阶段只做资源回收，不再影响主流程。
             }
         }
     }

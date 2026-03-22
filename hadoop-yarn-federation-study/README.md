@@ -35,10 +35,11 @@
 8. [Spark 统一走 Router 的提交方案](./docs/07-spark-router-submission.md)
 9. [RM HA、多 Router、SQL StateStore 的生产化改造路径](./docs/08-production-grade-roadmap.md)
 10. [WebFlux + SparkLauncher + YARN 状态查询接口设计](./docs/09-webflux-sparklauncher-api.md)
-11. [Vagrant + Ansible Lab](./lab/vagrant-ansible/README.md)
-12. `src/` 下的 Java 应用骨架
-13. `conf-templates/` 下的配置模板
-14. `scripts/` 下的主机准备、principal/keytab 生成、联邦冒烟脚本
+11. [项目交接与上下文说明](./docs/10-project-handover.md)
+12. [Vagrant + Ansible Lab](./lab/vagrant-ansible/README.md)
+13. `src/` 下的 Java 应用骨架
+14. `conf-templates/` 下的配置模板
+15. `scripts/` 下的主机准备、principal/keytab 生成、联邦冒烟脚本
 
 ## 我建议你怎么学，最稳
 
@@ -73,7 +74,8 @@ hadoop-yarn-federation-study
 │   ├── 06-linux-command-primer.md
 │   ├── 07-spark-router-submission.md
 │   ├── 08-production-grade-roadmap.md
-│   └── 09-webflux-sparklauncher-api.md
+│   ├── 09-webflux-sparklauncher-api.md
+│   └── 10-project-handover.md
 ├── src
 │   └── main
 │       ├── java

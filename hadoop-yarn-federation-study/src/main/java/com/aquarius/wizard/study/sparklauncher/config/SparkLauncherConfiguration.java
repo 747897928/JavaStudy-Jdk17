@@ -15,7 +15,6 @@ import java.nio.file.Path;
 @org.springframework.context.annotation.Configuration
 @EnableConfigurationProperties(SparkLauncherProperties.class)
 /**
- * 中文说明：
  * 这里集中管理 Spark 提交网关依赖的 Bean。
  * Hadoop Configuration 只在应用启动时加载一次，避免每次请求重复读 XML 配置文件。
  */

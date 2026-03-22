@@ -5,6 +5,10 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+/**
+ * 统一异常出口。
+ * 让调用方拿到稳定的 HTTP 错误响应，而不是直接暴露堆栈细节。
+ */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
