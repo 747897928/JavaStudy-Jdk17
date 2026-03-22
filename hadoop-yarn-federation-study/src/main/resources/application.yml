@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: hadoop-yarn-federation-study
+
+server:
+  port: 18089
+
+study:
+  spark:
+    spark-home: ${SPARK_HOME:/opt/spark}
+    hadoop-conf-dir: ${HADOOP_CONF_DIR:/etc/hadoop-router-client}
+    principal: ${SPARK_KRB_PRINCIPAL:sparkuser@EXAMPLE.COM}
+    keytab: ${SPARK_KRB_KEYTAB:/etc/security/keytabs/sparkuser.keytab}
+    app-id-wait-timeout: 8s

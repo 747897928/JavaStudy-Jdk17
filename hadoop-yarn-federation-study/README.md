@@ -36,8 +36,9 @@
 9. [RM HA、多 Router、SQL StateStore 的生产化改造路径](./docs/08-production-grade-roadmap.md)
 10. [WebFlux + SparkLauncher + YARN 状态查询接口设计](./docs/09-webflux-sparklauncher-api.md)
 11. [Vagrant + Ansible Lab](./lab/vagrant-ansible/README.md)
-12. `conf-templates/` 下的配置模板
-13. `scripts/` 下的主机准备、principal/keytab 生成、联邦冒烟脚本
+12. `src/` 下的 Java 应用骨架
+13. `conf-templates/` 下的配置模板
+14. `scripts/` 下的主机准备、principal/keytab 生成、联邦冒烟脚本
 
 ## 我建议你怎么学，最稳
 
@@ -73,6 +74,10 @@ hadoop-yarn-federation-study
 │   ├── 07-spark-router-submission.md
 │   ├── 08-production-grade-roadmap.md
 │   └── 09-webflux-sparklauncher-api.md
+├── src
+│   └── main
+│       ├── java
+│       └── resources
 ├── conf-templates
 │   ├── capacity-scheduler.xml
 │   ├── container-executor.cfg
@@ -97,10 +102,6 @@ hadoop-yarn-federation-study
 │       ├── README.md
 │       ├── Vagrantfile
 │       └── ansible
-├── code-samples
-│   └── webflux-sparklauncher
-│       ├── README.md
-│       └── src
 └── scripts
     ├── create-service-principals.sh
     ├── prepare-host-dirs.sh
@@ -131,6 +132,7 @@ hadoop-yarn-federation-study
 7. [RM HA、多 Router、SQL StateStore 的生产化改造路径](./docs/08-production-grade-roadmap.md)
 8. [WebFlux + SparkLauncher + YARN 状态查询接口设计](./docs/09-webflux-sparklauncher-api.md)
 9. 如果要动手起实验环境，再看 [Vagrant + Ansible Lab](./lab/vagrant-ansible/README.md)
+10. 如果要看 Java 代码骨架，直接看 `src/main/java`
 
 ## 你后面写博客可以直接用的主线
 
