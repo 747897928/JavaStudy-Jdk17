@@ -162,6 +162,9 @@ public class ReactiveDatabaseConfig {
             ConnectionPurpose connectionPurpose,
             DemoDatabaseProperties.Pool poolProperties
     ) {
+        // 这里不复用驱动内部的 TargetServerType 枚举：
+        // TargetServerType 解决的是“新建物理连接时驱动如何选 host”，
+        // 而这里的枚举表达的是“当前这个连接池承担的是写职责还是读职责”。
         ConnectionFactoryOptions.Builder optionsBuilder = ConnectionFactoryOptions.parse(url)
                 .mutate()
                 .option(ConnectionFactoryOptions.USER, username)
@@ -198,6 +201,17 @@ public class ReactiveDatabaseConfig {
     }
 
     /**
+     * 应用层连接池职责枚举。
+     * <p>
+     * 注意：这不是驱动层的 host 选择枚举，而是为了让配置代码更容易读懂，
+     * 明确区分“这个池是给写流量用的”还是“这个池是给读流量用的”。
+     */
+    private enum ConnectionPurpose {
+        WRITER,
+        READER
+    }
+
+    /**
      * Writer 连接借出时的二次校验。
      * <p>
      * 如果主从切换已经发生，而连接池里还残留着旧主节点的连接，
@@ -219,14 +233,6 @@ public class ReactiveDatabaseConfig {
                     }
                     return Mono.empty();
                 });
-    }
-
-    /**
-     * 用于区分当前连接池承担的是“写职责”还是“读职责”。
-     */
-    private enum ConnectionPurpose {
-        WRITER,
-        READER
     }
 
     /**
