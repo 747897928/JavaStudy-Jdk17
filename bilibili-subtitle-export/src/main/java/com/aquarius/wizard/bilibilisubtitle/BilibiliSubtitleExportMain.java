@@ -97,7 +97,7 @@ public final class BilibiliSubtitleExportMain {
         List<String> lines = fetchSubtitleLines(subtitleUrl, context.normalizedUrl, config.cookie, config.timeout);
 
         String baseName = buildOutputBaseName(context);
-        Path outputPath = nextAvailablePath(config.outDir.resolve(baseName + ".txt"));
+        Path outputPath = nextAvailablePath(config.outDir.resolve(baseName + ".md"));
         String content = String.join(System.lineSeparator(), lines) + System.lineSeparator();
         try {
             Files.writeString(outputPath, content, StandardCharsets.UTF_8);
